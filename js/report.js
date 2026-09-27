@@ -6,6 +6,15 @@
   'use strict';
 
   const Stats = root.Stats || (typeof require !== 'undefined' ? require('./stats.js') : null);
+  const Clases = root.Clases || (typeof require !== 'undefined' ? require('./clases.js') : null);
+
+  // Nombre del alcance con el que se comparó (grupo, grado o escuela).
+  function alcance(state) {
+    const v = state.scope || '';
+    if (v === 'all') return 'la escuela';
+    if (v.indexOf('g:') === 0) return 'el grado';
+    return 'el grupo';
+  }
 
   function esc(s) {
     return String(s == null ? '' : s)
@@ -65,7 +74,7 @@
 
   function headerHTML(cfg, subtitle) {
     const meta = [
-      cfg.grupo && 'Grupo: ' + esc(cfg.grupo),
+      cfg.grupo && (cfg.grupoTitulo || 'Grupo') + ': ' + esc(cfg.grupo),
       cfg.ciclo && 'Ciclo escolar: ' + esc(cfg.ciclo),
       cfg.maestro && 'Docente: ' + esc(cfg.maestro),
       'Fecha: ' + new Date().toLocaleDateString('es-MX'),
@@ -128,17 +137,29 @@
     const d = cfg.decimales == null ? 1 : cfg.decimales;
     const g = res.general;
     const reprob = res.porAlumno.filter((pa) => pa.reprobadas > 0).length;
-    let h = headerHTML(cfg, 'Reporte de resultados del grupo');
+    let h = headerHTML(cfg, state.multiClase ? 'Reporte de resultados' : 'Reporte de resultados del grupo');
 
     h += '<div class="kpis">';
     h += '<div class="kpi"><div class="l">Alumnos</div><div class="v">' + state.alumnos.length + '</div></div>';
-    h += '<div class="kpi"><div class="l">Promedio del grupo</div><div class="v">' + fmt(g.mean, d) + '</div></div>';
+    h += '<div class="kpi"><div class="l">Promedio</div><div class="v">' + fmt(g.mean, d) + '</div></div>';
     h += '<div class="kpi"><div class="l">Desviación estándar</div><div class="v">' + fmt(g.sd, 2) + '</div></div>';
     h += '<div class="kpi"><div class="l">Máximo / Mínimo</div><div class="v">' + fmt(g.max, d) + ' / ' + fmt(g.min, d) + '</div></div>';
     h += '<div class="kpi"><div class="l">Alumnos con materias reprobadas</div><div class="v">' + reprob + '</div></div>';
     h += '</div>';
 
     h += '<h2>Distribución del promedio general</h2>' + histogram(res.porAlumno.map((p) => p.general), cfg);
+
+    if (state.multiClase && Clases) {
+      h += '<h2>Comparación por grupo</h2><div class="tw"><table><thead><tr><th class="n">Grupo</th><th>Alumnos</th><th>Promedio</th><th>Desv. est.</th><th>Máx.</th><th>Mín.</th><th>Con reprobadas</th>';
+      state.materias.forEach((m) => (h += '<th>' + esc(m.nombre) + '</th>'));
+      h += '</tr></thead><tbody>';
+      Clases.resumenPorClase(state, res).forEach((r) => {
+        h += '<tr><td class="n"><b>' + esc(r.label) + '</b></td><td>' + r.n + '</td><td' + cellClass(r.stats.mean, cfg) + '><b>' + fmt(r.stats.mean, d) + '</b></td>' +
+          '<td>' + fmt(r.stats.sd, 2) + '</td><td>' + fmt(r.stats.max, d) + '</td><td>' + fmt(r.stats.min, d) + '</td><td>' + r.conReprobadas + '</td>' +
+          r.materias.map((v) => '<td' + cellClass(v, cfg) + '>' + fmt(v, d) + '</td>').join('') + '</tr>';
+      });
+      h += '</tbody></table></div>';
+    }
 
     h += '<h2>Estadísticas por materia</h2><div class="tw"><table><thead><tr>';
     h += '<th class="n">Materia</th><th>Evaluados</th><th>Media</th><th>Desv. est.</th><th>Mín.</th><th>Máx.</th><th>Mediana</th><th>Reprobados</th></tr></thead><tbody>';
@@ -151,8 +172,8 @@
     });
     h += '</tbody></table></div>';
 
-    h += '<h2>Posiciones del grupo</h2><div class="tw"><table><thead><tr>';
-    h += '<th>Posición</th><th>No.</th><th class="n">Nombre</th><th>Promedio</th><th>Puntaje T</th><th>Top %</th>';
+    h += '<h2>Posiciones en ' + alcance(state) + '</h2><div class="tw"><table><thead><tr>';
+    h += '<th>Posición</th><th>No.</th><th class="n">Nombre</th>' + (state.multiClase ? '<th>Grupo</th>' : '') + '<th>Promedio</th><th>Puntaje T</th><th>Top %</th>';
     res.perMateria.forEach((pm) => {
       h += '<th>' + esc(pm.materia.nombre) + '</th>';
     });
@@ -162,6 +183,7 @@
       h += '<tr' + (pa.rank != null && pa.rank <= 3 ? ' class="top3"' : '') + '>';
       h += '<td>' + (pa.rank == null ? '—' : pa.rank) + '</td><td>' + esc(pa.alumno.numero) + '</td>';
       h += '<td class="n">' + esc(pa.alumno.nombre) + '</td>';
+      if (state.multiClase) h += '<td>' + esc(Clases.claseLabel(pa.alumno)) + '</td>';
       h += '<td' + cellClass(pa.general, cfg) + '>' + fmt(pa.general, d) + '</td>';
       h += '<td>' + fmt(pa.tscore, 1) + '</td><td>' + (pa.top == null ? '—' : fmt(pa.top, 1) + '%') + '</td>';
       pa.materias.forEach((m) => {
@@ -188,12 +210,14 @@
     const d = cfg.decimales == null ? 1 : cfg.decimales;
     const pa = res.porAlumno[i];
     const n = res.general.n;
-    let h = headerHTML(cfg, 'Boleta de resultados');
-    h += '<div class="who"><h2>' + esc(pa.alumno.nombre) + '</h2><div class="meta">No. de lista: ' + esc(pa.alumno.numero) + '</div></div>';
+    // En la boleta el encabezado muestra el grupo del alumno.
+    const clase = Clases ? Clases.claseLabel(pa.alumno) : cfg.grupo;
+    let h = headerHTML(Object.assign({}, cfg, { grupo: clase, grupoTitulo: 'Grupo' }), 'Boleta de resultados');
+    h += '<div class="who"><h2>' + esc(pa.alumno.nombre) + '</h2><div class="meta">Grupo: ' + esc(clase) + ' · No. de lista: ' + esc(pa.alumno.numero) + '</div></div>';
     h += '<div class="big">';
     h += '<div class="kpi"><div class="l">Promedio general</div><div class="v">' + fmt(pa.general, d) + '</div></div>';
     h += '<div class="kpi"><div class="l">Puntaje T</div><div class="v">' + fmt(pa.tscore, 1) + '</div></div>';
-    h += '<div class="kpi"><div class="l">Posición en el grupo</div><div class="v">' + (pa.rank == null ? '—' : pa.rank + ' / ' + n) + '</div></div>';
+    h += '<div class="kpi"><div class="l">Posición en ' + alcance(state) + '</div><div class="v">' + (pa.rank == null ? '—' : pa.rank + ' / ' + n) + '</div></div>';
     h += '<div class="kpi"><div class="l">Porcentaje superior</div><div class="v">' + (pa.top == null ? '—' : 'Top ' + fmt(pa.top, 1) + '%') + '</div></div>';
     h += '</div>';
 
@@ -205,11 +229,12 @@
     for (let k = 0; k < maxEvals; k++) {
       h += '<th>' + (sameEvals ? esc(state.materias[0].evaluaciones[k].nombre) : 'Eval. ' + (k + 1)) + '</th>';
     }
-    h += '<th>Promedio</th><th>Media grupo</th><th>Puntaje T</th><th>Posición</th><th>Top %</th></tr></thead><tbody>';
+    h += '<th>Promedio</th><th>Media</th><th>Puntaje T</th><th>Posición</th><th>Top %</th></tr></thead><tbody>';
     const cal = state.calificaciones[pa.alumno.id] || {};
     pa.materias.forEach((m, mi) => {
       const mat = state.materias[mi];
       const pm = res.perMateria[mi];
+      if (Clases && !Clases.materiaAplica(mat, pa.alumno.grado)) return;
       h += '<tr><td class="n">' + esc(m.materia.nombre) + '</td>';
       for (let k = 0; k < maxEvals; k++) {
         const e = mat.evaluaciones[k];

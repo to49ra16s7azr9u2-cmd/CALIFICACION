@@ -231,6 +231,35 @@ td.tcell { min-width: 150px; }
 .kpi .l { font-size: 12px; color: var(--muted); }
 .kpi .v { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
+/* Grado / grupo */
+.scope-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 4px 6px 4px 10px;
+}
+.scope-l { font-weight: 700; color: var(--accent); font-size: 13px; }
+#scope { font-weight: 600; min-width: 200px; max-width: 100%; }
+.clase-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+table.overview td.clase { white-space: nowrap; color: var(--muted); font-weight: 600; }
+table.grades td.na { color: var(--muted); background: repeating-linear-gradient(45deg, var(--soft), var(--soft) 4px, #fff 4px, #fff 8px); }
+.grados-l { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
+.grados-l input { width: 90px; }
+.linkish { border: 0; background: none; padding: 0; font: inherit; font-weight: 600; color: var(--accent); cursor: pointer; text-decoration: underline; }
+
 /* Otros datos (campos personalizados) */
 table.grades thead th.extra-th { background: #475569; color: #fff; font-size: 13px; }
 table.grades td.xcell input, table.grades td.xcell select {

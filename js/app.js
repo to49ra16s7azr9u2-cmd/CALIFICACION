@@ -19,26 +19,42 @@
 
   let state = load();
   let results = null;
+  let view = null; // estado filtrado por grado / grupo (ver js/clases.js)
   let activeTab = 'config';
   const sortState = { key: 'rank', dir: 1 };
 
   // ---------------- Estado ----------------
 
   function emptyState() {
-    return { config: Object.assign({}, DEFAULT_CONFIG), materias: [], alumnos: [], calificaciones: {}, campos: [], extras: {} };
+    return { config: Object.assign({}, DEFAULT_CONFIG), materias: [], alumnos: [], calificaciones: {}, campos: [], extras: {}, vista: 'all' };
   }
 
   function normalize(s) {
     const base = emptyState();
     if (!s || typeof s !== 'object') return base;
-    return {
+    const out = {
       config: Object.assign(base.config, s.config || {}),
       materias: Array.isArray(s.materias) ? s.materias : [],
       alumnos: Array.isArray(s.alumnos) ? s.alumnos : [],
       calificaciones: s.calificaciones && typeof s.calificaciones === 'object' ? s.calificaciones : {},
       campos: Array.isArray(s.campos) ? s.campos : [],
       extras: s.extras && typeof s.extras === 'object' ? s.extras : {},
+      vista: typeof s.vista === 'string' ? s.vista : 'all',
     };
+    migrarGrupo(out);
+    return out;
+  }
+
+  // Datos anteriores tenían un solo grupo en la configuración («2° A»):
+  // se asigna ese grado y grupo a los alumnos que aún no tienen.
+  function migrarGrupo(st) {
+    const g = String(st.config.grupo || '').trim();
+    const m = g.match(/^(\S+)\s+(.+)$/);
+    st.alumnos.forEach((a) => {
+      if (a.grado != null || a.grupo != null) return;
+      a.grado = m ? m[1] : '';
+      a.grupo = m ? m[2] : g;
+    });
   }
 
   function load() {
@@ -77,8 +93,28 @@
   }
 
   function compute() {
-    results = Stats.computeResults(state);
+    if (!Clases.scopeValid(state.vista, state.alumnos)) state.vista = 'all';
+    view = Clases.buildView(state, state.vista);
+    // Las materias que no corresponden al grado del alumno no cuentan en su promedio.
+    results = Stats.computeResults(Object.assign({}, view, { calificaciones: Clases.calificacionesAplicables(view) }));
     return results;
+  }
+
+  // Estado para reportes y Excel: la vista, con el nombre del alcance como «grupo».
+  function viewForOutput() {
+    compute();
+    return Object.assign({}, view, {
+      config: Object.assign({}, state.config, { grupo: view.scopeLabel, grupoTitulo: view.multiClase ? 'Alcance' : 'Grupo' }),
+    });
+  }
+
+  // Grado y grupo que corresponden a lo nuevo que se agregue o importe en la vista actual.
+  function scopeDefaults() {
+    const v = state.vista || 'all';
+    const a = state.alumnos.find((x) => Clases.inScope(x, v));
+    if (v.indexOf('c:') === 0 && a) return { grado: a.grado || '', grupo: a.grupo || '' };
+    if (v.indexOf('g:') === 0 && a) return { grado: a.grado || '', grupo: '' };
+    return { grado: '', grupo: '' };
   }
 
   function dec() {
@@ -138,7 +174,7 @@
   function fileBase() {
     const d = new Date();
     const ymd = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
-    return 'calificaciones_' + slug(state.config.grupo) + '_' + ymd;
+    return 'calificaciones_' + slug(view ? view.scopeLabel : 'escuela') + '_' + ymd;
   }
 
   function downloadBlob(content, filename, type) {
@@ -156,7 +192,37 @@
 
   function renderHeader() {
     const c = state.config;
-    $('#hdr-sub').textContent = [c.escuela, c.grupo, c.ciclo].filter(Boolean).join(' · ');
+    $('#hdr-sub').textContent = [c.escuela, c.ciclo].filter(Boolean).join(' · ');
+    renderScope();
+  }
+
+  // ---------------- Selector de grado / grupo ----------------
+
+  function renderScope() {
+    const sel = $('#scope');
+    const clases = Clases.listClases(state.alumnos);
+    let html = '<option value="all">Toda la escuela (' + state.alumnos.length + ')</option>';
+    clases.forEach((g) => {
+      html += '<optgroup label="' + esc(g.label) + '">';
+      if (g.grupos.length > 1) html += '<option value="g:' + esc(g.key) + '">' + esc(g.label) + ' · todos los grupos (' + g.n + ')</option>';
+      g.grupos.forEach((c) => {
+        html += '<option value="c:' + esc(c.key) + '">' + esc(c.label) + ' (' + c.n + ')</option>';
+      });
+      html += '</optgroup>';
+    });
+    sel.innerHTML = html;
+    sel.value = [...sel.options].some((o) => o.value === state.vista) ? state.vista : 'all';
+    const v = state.vista || 'all';
+    $('#scope-hint').textContent =
+      v === 'all' ? 'Posición y puntaje T entre toda la escuela' : v.indexOf('g:') === 0 ? 'Posición y puntaje T entre todo el grado' : 'Posición y puntaje T dentro del grupo';
+  }
+
+  function bindScope() {
+    $('#scope').addEventListener('change', () => {
+      state.vista = $('#scope').value;
+      save();
+      renderActive();
+    });
   }
 
   // ---------------- Pestañas ----------------
@@ -169,8 +235,8 @@
   }
 
   function renderActive() {
-    renderHeader();
     compute();
+    renderHeader();
     if (activeTab === 'overview') renderOverview();
     if (activeTab === 'config') renderConfig();
     if (activeTab === 'grades') renderGrades();
@@ -180,16 +246,31 @@
 
   // ---------------- Vista general (toda la información en una tabla) ----------------
 
+  // Posición de cada alumno dentro de su propio grupo: {alumnoId: '3/25'}.
+  function rankEnGrupo() {
+    const out = {};
+    const porClase = {};
+    view.alumnos.forEach((a) => (porClase[Clases.claseKey(a)] = porClase[Clases.claseKey(a)] || []).push(a));
+    Object.values(porClase).forEach((alumnos) => {
+      const sub = Object.assign({}, view, { alumnos });
+      const r = Stats.computeResults(Object.assign({}, sub, { calificaciones: Clases.calificacionesAplicables(sub) }));
+      r.porAlumno.forEach((pa) => {
+        if (pa.rank != null) out[pa.alumno.id] = pa.rank + '/' + r.general.n;
+      });
+    });
+    return out;
+  }
+
   function renderOverview() {
     const c = state.config;
-    $('#ov-meta').textContent = [c.escuela, c.grupo && 'Grupo ' + c.grupo, c.ciclo, c.maestro]
+    $('#ov-meta').textContent = [c.escuela, view.scopeLabel, c.ciclo, c.maestro]
       .filter(Boolean)
       .join(' · ') +
-      (results.general.n ? ' · ' + state.alumnos.length + ' alumnos · Promedio del grupo ' + fmt(results.general.mean) : '');
+      (results.general.n ? ' · ' + view.alumnos.length + ' alumnos · Promedio ' + fmt(results.general.mean) : '');
     const table = $('#ov-table');
-    if (!state.materias.length || !state.alumnos.length) {
+    if (!view.materias.length || !view.alumnos.length) {
       table.innerHTML =
-        '<tbody><tr><td class="empty">Aún no hay datos. Agregue alumnos y materias en «Configuración», importe un archivo de Excel o cargue los datos de ejemplo.</td></tr></tbody>';
+        '<tbody><tr><td class="empty">Aún no hay datos en esta vista. Agregue alumnos y materias en «Configuración», importe un archivo de Excel o cargue los datos de ejemplo.</td></tr></tbody>';
       return;
     }
     const show = {
@@ -204,7 +285,7 @@
 
     // Definición de columnas: [{group, label, get(pa, i), stat:boolean, kind}]
     const groups = [];
-    state.materias.forEach((m, mi) => {
+    view.materias.forEach((m, mi) => {
       const cols = [];
       if (show.evals) {
         m.evaluaciones.forEach((e) =>
@@ -217,16 +298,24 @@
       if (show.top) cols.push({ label: 'Top %', kind: 'top', get: (pa) => pa.materias[mi].top });
       if (cols.length) groups.push({ name: m.nombre, cols, cls: 'materia-th' });
     });
+    // Con varios grupos en la vista, también se muestra la posición dentro del propio grupo.
+    const enGrupo = view.multiClase ? rankEnGrupo() : null;
     groups.push({
       name: 'General',
       cls: 'general-th',
       cols: [
         { label: 'Promedio', kind: 'prom', get: (pa) => pa.general },
         { label: 'Puntaje T', kind: 't', get: (pa) => pa.tscore },
-        { label: 'Posición', kind: 'rank', n: results.general.n, get: (pa) => pa.rank },
+        {
+          label: view.scope === 'all' ? 'Pos. escuela' : view.scope.indexOf('g:') === 0 ? 'Pos. grado' : 'Posición',
+          kind: 'rank',
+          n: results.general.n,
+          get: (pa) => pa.rank,
+        },
+      ].concat(enGrupo ? [{ label: 'Pos. grupo', kind: 'text', get: (pa) => enGrupo[pa.alumno.id] || '—' }] : []).concat([
         { label: 'Top %', kind: 'top', get: (pa) => pa.top },
         { label: 'Reprobadas', kind: 'count', get: (pa) => pa.reprobadas },
-      ],
+      ]),
     });
     if (show.extras && state.campos.length) {
       groups.push({
@@ -245,11 +334,12 @@
       if (col.kind === 'top') return v == null ? '—' : fmt(v, 1) + '%';
       if (col.kind === 't') return fmt(v, 1);
       if (col.kind === 'count') return v;
-      if (col.kind === 'xnum' || col.kind === 'xtext') return extraText(v);
+      if (col.kind === 'xnum' || col.kind === 'xtext' || col.kind === 'text') return extraText(v);
       return fmt(v);
     };
 
-    let h1 = '<tr><th class="sticky c0" rowspan="2">No.</th><th class="sticky c1" rowspan="2">Nombre</th>';
+    let h1 = '<tr><th class="sticky c0" rowspan="2">No.</th><th class="sticky c1" rowspan="2">Nombre</th>' +
+      (view.multiClase ? '<th rowspan="2">Grupo</th>' : '');
     let h2 = '<tr>';
     groups.forEach((g) => {
       h1 += '<th class="' + g.cls + ' sep-l" colspan="' + g.cols.length + '">' + esc(g.name) + '</th>';
@@ -269,6 +359,7 @@
       );
     }
     const order = $('#ov-order').value;
+    if (order === 'lista') rows = rows.slice(); // ya vienen por grado, grupo y número de lista
     if (order === 'rank') rows.sort((a, b) => (a.rank == null ? 1e9 : a.rank) - (b.rank == null ? 1e9 : b.rank));
     if (order === 'nombre') rows.sort((a, b) => a.alumno.nombre.localeCompare(b.alumno.nombre, 'es'));
 
@@ -276,6 +367,7 @@
     rows.forEach((pa) => {
       body += '<tr' + (pa.rank != null && pa.rank <= 3 ? ' class="top3"' : '') + '>';
       body += '<td class="sticky c0">' + esc(pa.alumno.numero) + '</td><td class="sticky c1">' + esc(pa.alumno.nombre) + '</td>';
+      if (view.multiClase) body += '<td class="clase">' + esc(Clases.claseLabel(pa.alumno)) + '</td>';
       groups.forEach((g) =>
         g.cols.forEach((col, k) => {
           const v = col.get(pa);
@@ -306,7 +398,7 @@
         )
       );
       statRows.forEach(([label, key]) => {
-        foot += '<tr><td class="sticky c0"></td><td class="sticky c1">' + label + '</td>';
+        foot += '<tr><td class="sticky c0"></td><td class="sticky c1">' + label + '</td>' + (view.multiClase ? '<td></td>' : '');
         groups.forEach((g, gi) =>
           g.cols.forEach((col, k) => {
             const d = descs[gi][k];
@@ -432,18 +524,25 @@
   }
 
   function renderAlumnos() {
-    $('#alumnos-count').textContent = state.alumnos.length;
+    const list = view.alumnos;
+    $('#alumnos-count').textContent = list.length;
+    $('#alumnos-scope').textContent = view.scopeLabel;
+    const d = scopeDefaults();
+    if (document.activeElement !== $('#new-al-grado')) $('#new-al-grado').value = d.grado;
+    if (document.activeElement !== $('#new-al-grupo')) $('#new-al-grupo').value = d.grupo;
     const tb = $('#alumnos-table tbody');
-    if (state.alumnos.length === 0) {
-      tb.innerHTML = '<tr><td colspan="3" class="empty">Aún no hay alumnos.</td></tr>';
+    if (list.length === 0) {
+      tb.innerHTML = '<tr><td colspan="5" class="empty">Aún no hay alumnos en esta vista.</td></tr>';
       return;
     }
-    tb.innerHTML = state.alumnos
+    tb.innerHTML = list
       .map(
-        (a, i) =>
-          '<tr><td><input data-al="' + i + '" data-f="numero" value="' + esc(a.numero) + '"></td>' +
-          '<td><input data-al="' + i + '" data-f="nombre" value="' + esc(a.nombre) + '"></td>' +
-          '<td><button class="btn icon" data-del-al="' + i + '" title="Eliminar">✕</button></td></tr>'
+        (a) =>
+          '<tr><td><input data-al="' + esc(a.id) + '" data-f="numero" value="' + esc(a.numero) + '" aria-label="No. de lista"></td>' +
+          '<td><input data-al="' + esc(a.id) + '" data-f="nombre" value="' + esc(a.nombre) + '" aria-label="Nombre"></td>' +
+          '<td><input data-al="' + esc(a.id) + '" data-f="grado" value="' + esc(a.grado || '') + '" aria-label="Grado"></td>' +
+          '<td><input data-al="' + esc(a.id) + '" data-f="grupo" value="' + esc(a.grupo || '') + '" aria-label="Grupo"></td>' +
+          '<td><button class="btn icon" data-del-al="' + esc(a.id) + '" title="Eliminar">✕</button></td></tr>'
       )
       .join('');
   }
@@ -467,6 +566,7 @@
         return (
           '<div class="materia"><div class="materia-head">' +
           '<input type="text" data-m="' + mi + '" data-f="materia" value="' + esc(m.nombre) + '">' +
+          '<label class="small grados-l">Grados <input type="text" data-m="' + mi + '" data-f="grados" value="' + esc((m.grados || []).join(', ')) + '" placeholder="Todos" title="Deje vacío si la materia es para todos los grados. Ej.: 2°, 3°"></label>' +
           '<button class="btn ghost" data-mv="' + mi + ':-1" title="Subir">▲</button>' +
           '<button class="btn ghost" data-mv="' + mi + ':1" title="Bajar">▼</button>' +
           '<button class="btn ghost" data-add-eval="' + mi + '">➕ Evaluación</button>' +
@@ -490,44 +590,67 @@
     $('#btn-add-alumnos').addEventListener('click', () => {
       const lines = $('#bulk-alumnos').value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
       if (!lines.length) return toast('Escriba o pegue al menos un nombre.', true);
+      const grado = $('#new-al-grado').value.trim();
+      const grupo = $('#new-al-grupo').value.trim();
+      const probe = { grado, grupo };
+      let next = state.alumnos.filter((x) => Clases.claseKey(x) === Clases.claseKey(probe)).length + 1;
       lines.forEach((nombre) => {
         const parts = nombre.split('\t');
         const a = parts.length > 1 && /^\d+$/.test(parts[0].trim())
-          ? { id: newId('a'), numero: parts[0].trim(), nombre: parts.slice(1).join(' ').trim() }
-          : { id: newId('a'), numero: String(state.alumnos.length + 1), nombre };
+          ? { id: newId('a'), numero: parts[0].trim(), nombre: parts.slice(1).join(' ').trim(), grado, grupo }
+          : { id: newId('a'), numero: String(next), nombre, grado, grupo };
+        next += 1;
         state.alumnos.push(a);
         state.calificaciones[a.id] = {};
       });
       $('#bulk-alumnos').value = '';
+      // Muestra el grupo al que se agregaron.
+      if (!Clases.inScope(probe, state.vista)) state.vista = 'c:' + Clases.claseKey(probe);
       save();
-      renderAlumnos();
-      toast(lines.length + ' alumno(s) agregado(s).');
+      renderActive();
+      toast(lines.length + ' alumno(s) agregado(s) a ' + Clases.claseLabel(probe) + '.');
     });
 
     $('#btn-sort-alumnos').addEventListener('click', () => {
-      state.alumnos.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
-      state.alumnos.forEach((a, i) => (a.numero = String(i + 1)));
+      // Ordena y renumera cada grupo de la vista por separado.
+      const porClase = {};
+      view.alumnos.forEach((a) => (porClase[Clases.claseKey(a)] = porClase[Clases.claseKey(a)] || []).push(a));
+      Object.values(porClase).forEach((list) => {
+        list.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
+        list.forEach((a, i) => (a.numero = String(i + 1)));
+      });
       save();
+      compute();
       renderAlumnos();
-      toast('Lista ordenada y renumerada.');
+      toast('Lista ordenada y renumerada por grupo.');
     });
 
     const alTable = $('#alumnos-table');
     alTable.addEventListener('input', (ev) => {
       const t = ev.target;
       if (t.dataset.al == null) return;
-      state.alumnos[Number(t.dataset.al)][t.dataset.f] = t.value;
+      const al = state.alumnos.find((x) => x.id === t.dataset.al);
+      if (!al) return;
+      al[t.dataset.f] = t.value;
       save();
+      if (t.dataset.f === 'grado' || t.dataset.f === 'grupo') renderScope();
+    });
+    alTable.addEventListener('change', (ev) => {
+      const f = ev.target.dataset.f;
+      if (f === 'grado' || f === 'grupo') renderActive();
     });
     alTable.addEventListener('click', (ev) => {
       const b = ev.target.closest('[data-del-al]');
       if (!b) return;
-      const a = state.alumnos[Number(b.dataset.delAl)];
+      const i = state.alumnos.findIndex((x) => x.id === b.dataset.delAl);
+      if (i < 0) return;
+      const a = state.alumnos[i];
       if (!confirm('¿Eliminar a «' + a.nombre + '» y sus calificaciones?')) return;
-      state.alumnos.splice(Number(b.dataset.delAl), 1);
+      state.alumnos.splice(i, 1);
       delete state.calificaciones[a.id];
+      delete state.extras[a.id];
       save();
-      renderAlumnos();
+      renderActive();
     });
 
     $('#btn-add-materia').addEventListener('click', () => {
@@ -553,6 +676,7 @@
       if (t.dataset.m == null) return;
       const m = state.materias[Number(t.dataset.m)];
       if (t.dataset.f === 'materia') m.nombre = t.value;
+      else if (t.dataset.f === 'grados') m.grados = parseOpciones(t.value);
       else {
         const e = m.evaluaciones[Number(t.dataset.e)];
         if (t.dataset.f === 'peso') e.peso = t.value === '' ? 0 : Number(t.value);
@@ -594,20 +718,20 @@
 
   function evalList() {
     const list = [];
-    state.materias.forEach((m, mi) => m.evaluaciones.forEach((e) => list.push({ mi, e })));
+    view.materias.forEach((m, mi) => m.evaluaciones.forEach((e) => list.push({ mi, e })));
     return list;
   }
 
   function renderGrades() {
     const table = $('#grades-table');
-    if (!state.materias.length || !state.alumnos.length) {
+    if (!view.materias.length || !view.alumnos.length) {
       table.innerHTML =
         '<tbody><tr><td class="empty">Primero agregue alumnos y materias en «Configuración», o importe un archivo de Excel.</td></tr></tbody>';
       return;
     }
     let h1 = '<tr><th class="sticky c0" rowspan="2">No.</th><th class="sticky c1" rowspan="2">Nombre</th>';
     let h2 = '<tr>';
-    state.materias.forEach((m) => {
+    view.materias.forEach((m) => {
       h1 += '<th class="materia-th sep-l" colspan="' + (m.evaluaciones.length + 1) + '">' + esc(m.nombre) + '</th>';
       m.evaluaciones.forEach((e, k) => {
         h2 += '<th' + (k === 0 ? ' class="sep-l"' : '') + ' title="Peso: ' + esc(e.peso) + '">' + esc(e.nombre) + '</th>';
@@ -627,13 +751,20 @@
 
     const flat = evalList();
     let body = '';
-    state.alumnos.forEach((a, r) => {
+    view.alumnos.forEach((a, r) => {
       const cal = state.calificaciones[a.id] || {};
-      body += '<tr><td class="sticky c0">' + esc(a.numero) + '</td><td class="sticky c1">' + esc(a.nombre) + '</td>';
+      body += '<tr><td class="sticky c0">' + esc(a.numero) + '</td><td class="sticky c1">' + esc(a.nombre) +
+        (view.multiClase ? ' <span class="clase-tag">' + esc(Clases.claseLabel(a)) + '</span>' : '') + '</td>';
       let c = 0;
-      state.materias.forEach((m, mi) => {
+      view.materias.forEach((m, mi) => {
+        const aplica = Clases.materiaAplica(m, a.grado);
         m.evaluaciones.forEach((e, k) => {
           const v = cal[e.id];
+          if (!aplica) {
+            body += '<td class="na' + (k === 0 ? ' sep-l' : '') + '" title="' + esc(m.nombre) + ' no corresponde a ' + esc(Clases.gradoLabel(a.grado) || 'este grado') + '">—</td>';
+            c += 1;
+            return;
+          }
           body +=
             '<td class="' + (k === 0 ? 'sep-l ' : '') + (isBad(v) ? 'bad' : '') + '"><input inputmode="decimal" data-r="' + r + '" data-c="' + c + '" value="' +
             (isNum(v) ? v : '') + '" aria-label="' + esc(a.nombre + ' – ' + m.nombre + ' – ' + e.nombre) + '"></td>';
@@ -690,15 +821,17 @@
       set('prom', fmt(pa.general), isBad(pa.general));
       set('t', fmt(pa.tscore, 1));
       set('rank', pa.rank == null ? '—' : pa.rank + ' / ' + results.general.n);
+
       set('top', pa.top == null ? '—' : fmt(pa.top, 1) + '%');
     });
   }
 
   function setGrade(r, c, raw) {
     const flat = evalList();
-    const a = state.alumnos[r];
+    const a = view.alumnos[r];
     const item = flat[c];
     if (!a || !item) return null;
+    if (!Clases.materiaAplica(view.materias[item.mi], a.grado)) return 'na';
     const cal = state.calificaciones[a.id] || (state.calificaciones[a.id] = {});
     const n = Excel.parseNumber(raw);
     const max = Number(state.config.escalaMax) || 10;
@@ -737,7 +870,7 @@
     const onExtra = (ev) => {
       const t = ev.target;
       if (t.dataset.xr == null) return;
-      const a = state.alumnos[Number(t.dataset.xr)];
+      const a = view.alumnos[Number(t.dataset.xr)];
       const cp = state.campos[Number(t.dataset.xf)];
       if (a && cp) {
         setExtra(a.id, cp, t.value);
@@ -796,8 +929,9 @@
         row.forEach((val, j) => {
           const r = r0 + i;
           const c = c0 + j;
-          if (r >= state.alumnos.length || c >= cols) return;
+          if (r >= view.alumnos.length || c >= cols) return;
           const st = setGrade(r, c, val);
+          if (st === 'na') return;
           const inp = table.querySelector('input[data-r="' + r + '"][data-c="' + c + '"]');
           if (inp) {
             inp.value = val.trim();
@@ -821,14 +955,14 @@
     const prev = scopeSel.value || 'general';
     scopeSel.innerHTML =
       '<option value="general">Promedio general</option>' +
-      state.materias.map((m, i) => '<option value="' + i + '">' + esc(m.nombre) + '</option>').join('');
+      view.materias.map((m, i) => '<option value="' + i + '">' + esc(m.nombre) + '</option>').join('');
     scopeSel.value = [...scopeSel.options].some((o) => o.value === prev) ? prev : 'general';
 
     const g = results.general;
     const reprob = results.porAlumno.filter((pa) => pa.reprobadas > 0).length;
     $('#kpis').innerHTML = [
-      ['Alumnos', state.alumnos.length],
-      ['Promedio del grupo', fmt(g.mean)],
+      ['Alumnos · ' + view.scopeLabel, view.alumnos.length],
+      ['Promedio', fmt(g.mean)],
       ['Desviación estándar', fmt(g.sd, 2)],
       ['Máximo / Mínimo', fmt(g.max) + ' / ' + fmt(g.min)],
       ['Mediana', fmt(g.median)],
@@ -839,6 +973,28 @@
 
     renderResultsTable();
     renderStatsTable();
+    renderCompare();
+  }
+
+  function renderCompare() {
+    const card = $('#compare-card');
+    card.hidden = !view.multiClase;
+    if (!view.multiClase) return;
+    const res = Clases.resumenPorClase(view, results);
+    const best = Math.max(...res.map((r) => (isNum(r.stats.mean) ? r.stats.mean : -Infinity)));
+    let html =
+      '<thead><tr><th class="sticky c1" style="left:0">Grupo</th><th>Alumnos</th><th>Promedio</th><th>Desv. est.</th><th>Máx.</th><th>Mín.</th><th>Con reprobadas</th>' +
+      view.materias.map((m) => '<th>' + esc(m.nombre) + '</th>').join('') +
+      '</tr></thead><tbody>';
+    res.forEach((r) => {
+      html +=
+        '<tr' + (r.stats.mean === best ? ' class="top3"' : '') + '><td class="sticky c1" style="left:0"><button class="linkish" data-goto="c:' + esc(r.key) + '">' + esc(r.label) + '</button></td>' +
+        '<td>' + r.n + '</td><td' + (isBad(r.stats.mean) ? ' class="bad"' : '') + '><b>' + fmt(r.stats.mean) + '</b></td><td>' + fmt(r.stats.sd, 2) +
+        '</td><td>' + fmt(r.stats.max) + '</td><td>' + fmt(r.stats.min) + '</td><td' + (r.conReprobadas ? ' class="bad"' : '') + '>' + r.conReprobadas + '</td>' +
+        r.materias.map((v) => '<td' + (isBad(v) ? ' class="bad"' : '') + '>' + fmt(v) + '</td>').join('') +
+        '</tr>';
+    });
+    $('#compare-table').innerHTML = html + '</tbody>';
   }
 
   function tBar(t) {
@@ -849,7 +1005,7 @@
 
   function renderResultsTable() {
     const table = $('#results-table');
-    if (!state.alumnos.length) {
+    if (!view.alumnos.length) {
       table.innerHTML = '<tbody><tr><td class="empty">No hay datos.</td></tr></tbody>';
       return;
     }
@@ -860,6 +1016,7 @@
       { key: 'numero', label: 'No.', cls: 'sticky c0' },
       { key: 'nombre', label: 'Nombre', cls: 'sticky c1' },
     ];
+    if (view.multiClase) cols.push({ key: 'clase', label: 'Grupo' });
     let rows;
     if (scope === 'general') {
       cols.push(
@@ -868,12 +1025,13 @@
         { key: 'top', label: 'Top %' },
         { key: 'rep', label: 'Reprobadas' }
       );
-      state.materias.forEach((m, i) => cols.push({ key: 'm' + i, label: m.nombre }));
+      view.materias.forEach((m, i) => cols.push({ key: 'm' + i, label: m.nombre }));
       rows = results.porAlumno.map((pa) => {
         const row = {
           rank: pa.rank,
           numero: pa.alumno.numero,
           nombre: pa.alumno.nombre,
+          clase: Clases.claseLabel(pa.alumno),
           prom: pa.general,
           t: pa.tscore,
           top: pa.top,
@@ -884,7 +1042,7 @@
       });
     } else {
       const mi = Number(scope);
-      const mat = state.materias[mi];
+      const mat = view.materias[mi];
       mat.evaluaciones.forEach((e, k) => cols.push({ key: 'e' + k, label: e.nombre }));
       cols.push(
         { key: 'prom', label: 'Promedio' },
@@ -898,6 +1056,7 @@
           rank: m.rank,
           numero: pa.alumno.numero,
           nombre: pa.alumno.nombre,
+          clase: Clases.claseLabel(pa.alumno),
           prom: m.promedio,
           t: m.tscore,
           top: m.top,
@@ -928,6 +1087,7 @@
           return v == null ? '—' : v + ' / ' + n;
         case 'numero':
         case 'nombre':
+        case 'clase':
           return esc(v);
         case 't':
           return fmt(v, 1) + tBar(v);
@@ -961,7 +1121,7 @@
 
   function renderStatsTable() {
     const table = $('#stats-table');
-    if (!state.materias.length) {
+    if (!view.materias.length) {
       table.innerHTML = '<tbody><tr><td class="empty">No hay materias.</td></tr></tbody>';
       return;
     }
@@ -979,6 +1139,13 @@
   }
 
   function bindResults() {
+    $('#compare-table').addEventListener('click', (ev) => {
+      const b = ev.target.closest('[data-goto]');
+      if (!b) return;
+      state.vista = b.dataset.goto;
+      save();
+      renderActive();
+    });
     $('#results-scope').addEventListener('change', () => {
       sortState.key = 'rank';
       sortState.dir = 1;
@@ -992,7 +1159,7 @@
       else {
         sortState.key = key;
         // Posición, No. y Nombre ascendente; calificaciones descendente.
-        sortState.dir = ['rank', 'numero', 'nombre', 'top'].includes(key) ? 1 : -1;
+        sortState.dir = ['rank', 'numero', 'nombre', 'clase', 'top'].includes(key) ? 1 : -1;
       }
       renderResultsTable();
     });
@@ -1008,15 +1175,18 @@
       '<option value="boletas">Boletas de todos los alumnos</option>' +
       '<option value="completo">Reporte completo (grupo + boletas)</option>' +
       '<optgroup label="Boleta individual">' +
-      state.alumnos.map((a) => '<option value="alumno:' + esc(a.id) + '">' + esc(a.numero + '. ' + a.nombre) + '</option>').join('') +
+      view.alumnos
+        .map((a) => '<option value="alumno:' + esc(a.id) + '">' + esc((view.multiClase ? Clases.claseLabel(a) + ' · ' : '') + a.numero + '. ' + a.nombre) + '</option>')
+        .join('') +
       '</optgroup>';
     sel.value = [...sel.options].some((o) => o.value === prev) ? prev : 'grupo';
-    $('#report-frame').srcdoc = Report.generate(state, results, sel.value);
+    $('#report-frame').srcdoc = Report.generate(viewForOutput(), results, sel.value);
   }
 
   function bindReport() {
     $('#report-mode').addEventListener('change', () => {
-      $('#report-frame').srcdoc = Report.generate(state, compute(), $('#report-mode').value);
+      const v = viewForOutput();
+      $('#report-frame').srcdoc = Report.generate(v, results, $('#report-mode').value);
     });
     $('#btn-print').addEventListener('click', () => {
       const w = $('#report-frame').contentWindow;
@@ -1025,9 +1195,10 @@
     });
     $('#btn-download-html').addEventListener('click', () => {
       const mode = $('#report-mode').value;
-      const html = Report.generate(state, compute(), mode);
+      const v = viewForOutput();
+      const html = Report.generate(v, results, mode);
       const suffix = mode.indexOf('alumno:') === 0
-        ? 'boleta_' + slug((state.alumnos.find((a) => 'alumno:' + a.id === mode) || {}).nombre)
+        ? 'boleta_' + slug((view.alumnos.find((a) => 'alumno:' + a.id === mode) || {}).nombre)
         : mode;
       downloadBlob(html, fileBase() + '_' + suffix + '.html', 'text/html;charset=utf-8');
     });
@@ -1044,29 +1215,24 @@
       if (!file) return;
       try {
         const data = await Excel.readFile(file);
-        const hasData = state.alumnos.length || state.materias.length;
-        if (hasData && !confirm(
-          'Se encontraron ' + data.alumnos.length + ' alumnos y ' + data.materias.length +
-          ' materias.\n¿Reemplazar los alumnos, materias y calificaciones actuales? (Los datos del grupo se conservan.)'
+        const fb = scopeDefaults();
+        const destino = data.hasGrado || data.hasGrupo
+          ? 'los grados y grupos indicados en el archivo'
+          : fb.grupo || fb.grado
+          ? Clases.claseLabel(fb)
+          : '«Sin grupo» (el archivo no tiene columnas Grado y Grupo; elija un grupo arriba antes de importar para asignarlo)';
+        if (state.alumnos.length && !confirm(
+          'Se encontraron ' + data.alumnos.length + ' alumnos y ' + data.materias.length + ' materias.\n' +
+          'Se agregarán a ' + destino + '. Los alumnos que ya existen (mismo grado, grupo y nombre) se actualizan; no se borra nada más.\n¿Continuar?'
         )) return;
-        state.materias = data.materias;
-        state.alumnos = data.alumnos;
-        state.calificaciones = data.calificaciones;
-        // Conserva el tipo de los datos adicionales que ya existían con el mismo nombre.
-        const prev = {};
-        state.campos.forEach((cp) => (prev[cp.nombre.trim().toLowerCase()] = cp));
-        data.campos.forEach((cp) => {
-          const old = prev[cp.nombre.trim().toLowerCase()];
-          if (old) {
-            cp.tipo = old.tipo;
-            cp.opciones = old.opciones;
-          }
-        });
-        state.campos = data.campos;
-        state.extras = data.extras;
+        const r = Excel.mergeImport(state, data, fb);
+        state = normalize(r.state);
+        const first = state.alumnos.find((x) => x.id === (data.alumnos[0] || {}).id) ||
+          state.alumnos.find((x) => (data.alumnos[0] || {}).nombre === x.nombre);
+        if (first && !Clases.inScope(first, state.vista)) state.vista = 'all';
         save();
-        toast('Importado: ' + data.alumnos.length + ' alumnos, ' + data.materias.length + ' materias.');
-        showTab('grades');
+        toast('Importado: ' + r.nuevos + ' alumno(s) nuevo(s), ' + r.actualizados + ' actualizado(s).');
+        showTab('overview');
       } catch (err) {
         toast('Error al importar: ' + err.message, true);
       }
@@ -1074,22 +1240,34 @@
 
     $('#btn-export-xlsx').addEventListener('click', () => {
       if (!state.alumnos.length) return toast('No hay datos para exportar.', true);
-      Excel.downloadWorkbook(Excel.buildSheets(state, compute(), { decimals: 2 }), fileBase() + '.xlsx', 'xlsx');
+      const v = viewForOutput();
+      if (!v.alumnos.length) return toast('No hay alumnos en esta vista.', true);
+      Excel.downloadWorkbook(Excel.buildSheets(v, results, { decimals: 2 }), fileBase() + '.xlsx', 'xlsx');
     });
     $('#btn-export-csv').addEventListener('click', () => {
       if (!state.alumnos.length) return toast('No hay datos para exportar.', true);
-      Excel.downloadWorkbook(Excel.buildSheets(state, compute(), { decimals: 2 }), fileBase() + '.csv', 'csv');
+      const v = viewForOutput();
+      if (!v.alumnos.length) return toast('No hay alumnos en esta vista.', true);
+      Excel.downloadWorkbook(Excel.buildSheets(v, results, { decimals: 2 }), fileBase() + '.csv', 'csv');
     });
     $('#btn-template').addEventListener('click', () => {
+      compute();
+      const fb = scopeDefaults();
       const tpl = state.materias.length
-        ? { materias: state.materias, campos: state.campos, extras: {}, alumnos: state.alumnos.length ? state.alumnos : [{ id: 'x', numero: '1', nombre: '' }], calificaciones: {} }
+        ? {
+            materias: view.materias,
+            campos: state.campos,
+            extras: {},
+            alumnos: view.alumnos.length ? view.alumnos : [{ id: 'x', numero: '1', nombre: '', grado: fb.grado, grupo: fb.grupo }],
+            calificaciones: {},
+          }
         : {
             materias: ['Español', 'Matemáticas', 'Ciencias'].map((n, i) => ({
               id: 'm' + i,
               nombre: n,
               evaluaciones: ['Trimestre 1', 'Trimestre 2', 'Trimestre 3'].map((e, k) => ({ id: 'm' + i + 'e' + k, nombre: e, peso: 1 })),
             })),
-            alumnos: [{ id: 'x1', numero: '1', nombre: 'Apellido Apellido Nombre' }],
+            alumnos: [{ id: 'x1', numero: '1', nombre: 'Apellido Apellido Nombre', grado: '1°', grupo: 'A' }],
             calificaciones: {},
           };
       Excel.downloadWorkbook(Excel.buildSheets(tpl, null, { withResults: false }), 'plantilla_calificaciones.xlsx', 'xlsx');
@@ -1123,7 +1301,7 @@
       state = normalize(Sample.make());
       save();
       toast('Datos de ejemplo cargados.');
-      showTab('grades');
+      showTab('overview');
     });
     $('#btn-reset').addEventListener('click', () => {
       if (!confirm('¿Borrar TODOS los datos? Se recomienda descargar un respaldo antes.')) return;
@@ -1136,6 +1314,7 @@
   // ---------------- Inicio ----------------
 
   bindToolbar();
+  bindScope();
   bindOverview();
   bindConfig();
   bindCampos();

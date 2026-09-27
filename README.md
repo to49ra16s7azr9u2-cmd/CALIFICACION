@@ -9,6 +9,11 @@ Aplicación web para que los docentes administren calificaciones: no requiere in
 
 ### Funciones
 
+**Grados y grupos**: cada alumno tiene *grado* (1°, 2°, 3°…) y *grupo* (A, B…). El selector **Ver** de la parte superior cambia todas las pestañas a:
+*Toda la escuela*, *un grado completo* (todos sus grupos) o *un solo grupo*. La posición, el puntaje T y el Top % se calculan contra los alumnos de esa vista
+(dentro del grupo, del grado o de la escuela); en vistas con varios grupos se muestran además la columna «Grupo», la posición dentro del propio grupo
+y la **comparación por grupo**. Una materia puede limitarse a ciertos grados (p. ej., Física sólo en 2°).
+
 | Pestaña | Contenido |
 |---|---|
 | **1. Vista general** | **Toda la información en una sola tabla**: por cada alumno, las calificaciones de cada evaluación y, por materia y en general, promedio, puntaje T, posición y Top %. Filas de estadísticas del grupo (media, desviación, máximo, mínimo), búsqueda, orden y columnas que se pueden ocultar. |
@@ -19,18 +24,18 @@ Aplicación web para que los docentes administren calificaciones: no requiere in
 
 ### Excel / Google Sheets
 
-- **Importar**: `.xlsx`, `.xls`, `.ods`, `.csv`. Se busca la columna «Nombre»; el encabezado puede ser de dos niveles (con celdas combinadas) o de un solo nivel (una columna por materia). Las columnas calculadas (Promedio, Puntaje T, Posición, Top %) se ignoran. El peso puede escribirse en el nombre: `Examen (60%)`.
-- **Exportar Excel**: libro con 4 hojas — *Calificaciones* (dos niveles, celdas combinadas), *Tabla completa* (toda la información), *Resultados* (ranking) y *Estadísticas*. El archivo exportado se puede volver a importar sin perder datos.
+- **Importar**: `.xlsx`, `.xls`, `.ods`, `.csv`. **No borra nada**: agrega alumnos nuevos y actualiza los existentes (mismo grado, grupo y nombre); materias y evaluaciones se reúnen por nombre. Si el archivo trae columnas «Grado» y «Grupo» se usan; si no, los alumnos se asignan al grupo elegido en «Ver». Se busca la columna «Nombre»; el encabezado puede ser de dos niveles (con celdas combinadas) o de un solo nivel (una columna por materia). Las columnas calculadas (Promedio, Puntaje T, Posición, Top %) se ignoran. El peso puede escribirse en el nombre: `Examen (60%)`.
+- **Exportar Excel**: exporta la vista elegida en «Ver». Hojas: *Calificaciones* (dos niveles, celdas combinadas, con Grado y Grupo), *Tabla completa* (toda la información), *Resultados* (ranking), *Por grupo* (si hay varios grupos) y *Estadísticas*. El archivo exportado se puede volver a importar sin perder datos.
 - **Otros datos**: se exportan en el grupo «Otros datos» al final de la tabla y se vuelven a leer al importar (si todos los valores son números, el campo se toma como numérico).
 - **Plantilla**: descarga un archivo vacío con el formato correcto.
 - **Google Sheets**: *Archivo → Descargar → Microsoft Excel (.xlsx)* y luego importar aquí; para subir, *Archivo → Importar* el `.xlsx` exportado.
 
 Formato de ejemplo:
 
-|No.|Nombre|Matemáticas|||Español||
-|---|---|---|---|---|---|---|
-| | |Trimestre 1|Trimestre 2|Trimestre 3|Trimestre 1|Trimestre 2|
-|1|García López Ana|9|8.5|9.2|10|9|
+|No.|Nombre|Grado|Grupo|Matemáticas|||Español||
+|---|---|---|---|---|---|---|---|---|
+| | | | |Trimestre 1|Trimestre 2|Trimestre 3|Trimestre 1|Trimestre 2|
+|1|García López Ana|2°|A|9|8.5|9.2|10|9|
 
 ### Fórmulas
 
@@ -51,6 +56,8 @@ Los datos se guardan automáticamente **sólo en el navegador** de esa computado
 メキシコの学校の先生向けの成績管理システムです。インストール不要、**`index.html` をブラウザで開くだけ**で動きます（インターネット接続も不要）。画面はスペイン語です。
 
 ### 主な機能
+
+- **学年・クラス別表示**：生徒ごとに学年（Grado）とクラス（Grupo）を持ち、画面上部の「Ver」で「学校全体／学年全体／クラス」を切り替え。順位・偏差値・上位％は選んだ範囲（クラス内・学年内・学校全体）で計算。複数クラス表示ではクラス列、クラス内順位、クラス比較表も表示。教科を特定の学年だけに設定可能（例：Física は2年のみ）。Excel 読み込みは既存データを消さずに追加・更新。
 
 - **全情報一覧表（Vista general・最初のタブ）**：生徒ごとの全評価の点数と、教科別・総合の平均・偏差値・順位・上位％を1つの表で表示。クラス統計（平均・標準偏差・最高・最低）行、検索、並べ替え、列の表示切替付き。
 
@@ -76,6 +83,7 @@ Los datos se guardan automáticamente **sólo en el navegador** de esa computado
 index.html          Interfaz
 css/styles.css      Estilos
 js/stats.js         Cálculos (promedios, puntaje T, posiciones, Top %)
+js/clases.js        Grados, grupos y vistas (escuela / grado / grupo)
 js/excel.js         Importar / exportar Excel y CSV
 js/report.js        Generador de reportes y boletas
 js/sample.js        Datos de ejemplo

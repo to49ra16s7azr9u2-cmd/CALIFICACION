@@ -22,6 +22,12 @@
   </header>
 
   <div class="toolbar">
+    <label class="scope-box" for="scope">
+      <span class="scope-l">Ver</span>
+      <select id="scope" aria-describedby="scope-hint"></select>
+      <span id="scope-hint" class="muted small"></span>
+    </label>
+    <span class="sep"></span>
     <label class="btn">
       📥 Importar Excel / CSV
       <input type="file" id="file-import" accept=".xlsx,.xls,.xlsm,.ods,.csv" hidden>
@@ -29,7 +35,6 @@
     <button class="btn" id="btn-export-xlsx">📤 Exportar Excel</button>
     <button class="btn" id="btn-export-csv">📤 Exportar CSV</button>
     <button class="btn" id="btn-template">📄 Descargar plantilla</button>
-    <span class="sep"></span>
     <button class="btn ghost" id="btn-backup">💾 Respaldo (JSON)</button>
     <label class="btn ghost">
       ♻️ Restaurar respaldo
@@ -45,7 +50,7 @@
       <div class="card">
         <div class="card-head">
           <div>
-            <h2>Tabla completa del grupo</h2>
+            <h2>Tabla completa</h2>
             <div id="ov-meta" class="muted small"></div>
           </div>
           <div class="row ov-controls">
@@ -83,10 +88,9 @@
     <section id="tab-config" class="panel">
       <div class="grid-2">
         <div class="card">
-          <h2>Datos del grupo</h2>
+          <h2>Datos de la escuela</h2>
           <div class="form">
             <label>Escuela <input data-cfg="escuela" type="text" placeholder="Escuela Secundaria Técnica No. 1"></label>
-            <label>Grupo <input data-cfg="grupo" type="text" placeholder="2° A"></label>
             <label>Ciclo escolar <input data-cfg="ciclo" type="text" placeholder="2026-2027"></label>
             <label>Docente <input data-cfg="maestro" type="text" placeholder="Nombre del docente"></label>
             <label>Calificación máxima <input data-cfg="escalaMax" type="number" min="1" step="any"></label>
@@ -95,16 +99,18 @@
           </div>
         </div>
         <div class="card">
-          <h2>Alumnos <span id="alumnos-count" class="pill"></span></h2>
-          <p class="muted small">Pegue una lista de nombres (uno por renglón) para agregarlos de una vez.</p>
+          <h2>Alumnos <span id="alumnos-count" class="pill"></span> <span id="alumnos-scope" class="muted small"></span></h2>
+          <p class="muted small">Pegue una lista de nombres (uno por renglón) para agregarlos de una vez al grado y grupo indicados. La lista muestra los alumnos de la vista elegida arriba («Ver»).</p>
           <textarea id="bulk-alumnos" rows="4" placeholder="García López Ana&#10;Hernández Pérez Luis&#10;..."></textarea>
           <div class="row">
+            <label class="small">Grado <input type="text" id="new-al-grado" placeholder="1°" size="4"></label>
+            <label class="small">Grupo <input type="text" id="new-al-grupo" placeholder="A" size="4"></label>
             <button class="btn" id="btn-add-alumnos">➕ Agregar alumnos</button>
             <button class="btn ghost" id="btn-sort-alumnos">🔤 Ordenar alfabéticamente</button>
           </div>
           <div class="list-wrap">
             <table class="simple" id="alumnos-table">
-              <thead><tr><th style="width:70px">No.</th><th>Nombre</th><th style="width:40px"></th></tr></thead>
+              <thead><tr><th style="width:60px">No.</th><th>Nombre</th><th style="width:64px">Grado</th><th style="width:64px">Grupo</th><th style="width:40px"></th></tr></thead>
               <tbody></tbody>
             </table>
           </div>
@@ -116,6 +122,7 @@
         <p class="muted small">
           Cada materia forma el primer nivel del encabezado y sus evaluaciones (parciales, trimestres, exámenes, tareas…) el segundo nivel.
           El <b>peso</b> es relativo: por ejemplo 30 / 30 / 40, o 1 / 1 / 2. Las evaluaciones vacías no se cuentan en el promedio.
+          En <b>Grados</b> puede limitar una materia a ciertos grados (p. ej., Física → 2°); vacío = todos los grados.
         </p>
         <div id="materias-editor"></div>
         <div class="row">
@@ -180,6 +187,11 @@
           <b>Top %</b> = posición ÷ alumnos × 100. Los empates comparten posición. Haga clic en un encabezado para ordenar.
         </p>
       </div>
+      <div class="card" id="compare-card" hidden>
+        <h2>Comparación por grupo</h2>
+        <div class="grade-wrap"><table class="results" id="compare-table"></table></div>
+        <p class="muted small">Promedio general de cada grupo y promedio por materia. Haga clic en un grupo para verlo por separado.</p>
+      </div>
       <div class="card">
         <h2>Estadísticas por materia</h2>
         <div class="grade-wrap"><table class="results" id="stats-table"></table></div>
@@ -206,6 +218,7 @@
 
   <script src="vendor/xlsx.full.min.js"></script>
   <script src="js/stats.js"></script>
+  <script src="js/clases.js"></script>
   <script src="js/excel.js"></script>
   <script src="js/report.js"></script>
   <script src="js/sample.js"></script>

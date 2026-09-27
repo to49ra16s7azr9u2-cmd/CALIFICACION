@@ -30,6 +30,8 @@
 
   const RE_NOMBRE = /^(nombre|alumno|alumna|estudiante|nombre del alumno|nombre completo)/;
   const RE_NUMERO = /^(no\.?|num\.?|numero|n°|#|lista|no\. lista|no de lista)$/;
+  const RE_GRADO = /^(grado|ano|ano escolar|curso)$/;
+  const RE_GRUPO = /^(grupo|salon|seccion)$/;
   // Columnas calculadas que no se importan.
   const RE_CALC = /^(prom\.?|promedio.*|general|puntaje t|puntaje|t|posicion|lugar|ranking|top.*|% superior|percentil|reprobadas|materias reprobadas|desv.*)$/;
   // Grupo de datos adicionales (campos personalizados, no cuentan en el promedio).
@@ -82,20 +84,21 @@
     }
     const top = rows[h];
     const width = Math.max(...rows.map((r) => r.length), 0);
-    let numCol = -1;
-    for (let c = 0; c < top.length; c++) {
-      if (c !== nameCol && RE_NUMERO.test(norm(top[c]))) {
-        numCol = c;
-        break;
-      }
-    }
+    const findCol = (re) => {
+      for (let c = 0; c < top.length; c++) if (c !== nameCol && re.test(norm(top[c]))) return c;
+      return -1;
+    };
+    const numCol = findCol(RE_NUMERO);
+    const gradoCol = findCol(RE_GRADO);
+    const grupoCol = findCol(RE_GRUPO);
+    const reserved = (c) => c === nameCol || c === numCol || c === gradoCol || c === grupoCol;
 
     // ¿Encabezado de dos niveles?
     const sub = rows[h + 1] || [];
     let twoLevel = false;
     if (isEmpty(sub[nameCol])) {
       for (let c = 0; c < width; c++) {
-        if (c === nameCol || c === numCol) continue;
+        if (reserved(c)) continue;
         if (!isEmpty(sub[c]) && parseNumber(sub[c]) === null) {
           twoLevel = true;
           break;
@@ -111,7 +114,7 @@
       let current = null; // materia actual (o null si se debe ignorar)
       let currentLabel = null;
       for (let c = 0; c < width; c++) {
-        if (c === nameCol || c === numCol) {
+        if (reserved(c)) {
           current = null;
           currentLabel = null;
           continue;
@@ -155,7 +158,7 @@
       }
     } else {
       for (let c = 0; c < width; c++) {
-        if (c === nameCol || c === numCol) continue;
+        if (reserved(c)) continue;
         const t = top[c];
         if (isEmpty(t) || RE_CALC.test(norm(t))) continue;
         const e = { id: newId('e'), nombre: 'Calificación', peso: 1 };
@@ -182,6 +185,8 @@
         numero: numCol >= 0 && !isEmpty(row[numCol]) ? String(row[numCol]).trim() : String(alumnos.length + 1),
         nombre,
       };
+      if (gradoCol >= 0) a.grado = String(row[gradoCol] == null ? '' : row[gradoCol]).trim();
+      if (grupoCol >= 0) a.grupo = String(row[grupoCol] == null ? '' : row[grupoCol]).trim();
       alumnos.push(a);
       const cal = {};
       const ex = {};
@@ -208,7 +213,106 @@
       }
     });
 
-    return { materias: cleanMaterias, alumnos, calificaciones, campos, extras, twoLevel };
+    return {
+      materias: cleanMaterias,
+      alumnos,
+      calificaciones,
+      campos,
+      extras,
+      twoLevel,
+      hasGrado: gradoCol >= 0,
+      hasGrupo: grupoCol >= 0,
+    };
+  }
+
+  /*
+   * Integra lo importado al estado actual sin borrar nada:
+   * - materias, evaluaciones y datos adicionales se reúnen por nombre;
+   * - un alumno se reconoce por grado + grupo + nombre; si existe se actualizan
+   *   sólo las columnas que trae el archivo, si no existe se agrega;
+   * - si el archivo no trae Grado/Grupo se usan los de `fallback`.
+   * Devuelve { state, nuevos, actualizados }.
+   */
+  function mergeImport(state, data, fallback) {
+    const fb = fallback || {};
+    const out = {
+      config: state.config,
+      materias: (state.materias || []).map((m) => Object.assign({}, m, { evaluaciones: m.evaluaciones.slice() })),
+      alumnos: (state.alumnos || []).map((a) => Object.assign({}, a)),
+      calificaciones: Object.assign({}, state.calificaciones || {}),
+      campos: (state.campos || []).slice(),
+      extras: Object.assign({}, state.extras || {}),
+    };
+    Object.keys(state).forEach((k) => {
+      if (!(k in out)) out[k] = state[k];
+    });
+
+    const evalMap = {};
+    data.materias.forEach((im) => {
+      let m = out.materias.find((x) => norm(x.nombre) === norm(im.nombre));
+      if (!m) {
+        m = { id: im.id, nombre: im.nombre, evaluaciones: [] };
+        out.materias.push(m);
+      }
+      im.evaluaciones.forEach((ie) => {
+        let e = m.evaluaciones.find((x) => norm(x.nombre) === norm(ie.nombre));
+        if (!e) {
+          e = { id: ie.id, nombre: ie.nombre, peso: ie.peso };
+          m.evaluaciones.push(e);
+        }
+        evalMap[ie.id] = e.id;
+      });
+    });
+
+    const campoMap = {};
+    (data.campos || []).forEach((ic) => {
+      let c = out.campos.find((x) => norm(x.nombre) === norm(ic.nombre));
+      if (!c) {
+        c = Object.assign({}, ic);
+        out.campos.push(c);
+      }
+      campoMap[ic.id] = c;
+    });
+
+    const Cl = root.Clases || (typeof require !== 'undefined' ? require('./clases.js') : null);
+    const key = (a) => Cl.gradoKey(a.grado) + '|' + Cl.grupoKey(a.grupo) + '|' + norm(a.nombre);
+    let nuevos = 0;
+    let actualizados = 0;
+    data.alumnos.forEach((ia) => {
+      const grado = data.hasGrado ? ia.grado : fb.grado || '';
+      const grupo = data.hasGrupo ? ia.grupo : fb.grupo || '';
+      const probe = { grado, grupo, nombre: ia.nombre };
+      let a = out.alumnos.find((x) => key(x) === key(probe));
+      if (a) {
+        actualizados += 1;
+        if (ia.numero) a.numero = ia.numero;
+      } else {
+        nuevos += 1;
+        a = { id: ia.id, numero: ia.numero, nombre: ia.nombre, grado, grupo };
+        out.alumnos.push(a);
+      }
+      const cal = Object.assign({}, out.calificaciones[a.id] || {});
+      const src = data.calificaciones[ia.id] || {};
+      Object.keys(evalMap).forEach((iid) => {
+        if (src[iid] != null) cal[evalMap[iid]] = src[iid];
+        else delete cal[evalMap[iid]];
+      });
+      out.calificaciones[a.id] = cal;
+      const ex = Object.assign({}, out.extras[a.id] || {});
+      const isrc = (data.extras || {})[ia.id] || {};
+      Object.keys(campoMap).forEach((iid) => {
+        const c = campoMap[iid];
+        let v = isrc[iid];
+        if (v != null && c.tipo === 'numero' && typeof v !== 'number') {
+          const n = parseNumber(v);
+          if (n !== null) v = n;
+        }
+        if (v != null && v !== '') ex[c.id] = v;
+        else delete ex[c.id];
+      });
+      out.extras[a.id] = ex;
+    });
+    return { state: out, nuevos, actualizados };
   }
 
   function round(v, d) {
@@ -240,12 +344,13 @@
     });
 
     // --- Hoja 1: Calificaciones (dos niveles) ---
-    const top = ['No.', 'Nombre'];
-    const sub = ['', ''];
-    const merges = [
-      { s: { r: 0, c: 0 }, e: { r: 1, c: 0 } },
-      { s: { r: 0, c: 1 }, e: { r: 1, c: 1 } },
-    ];
+    const LEAD = ['No.', 'Nombre', 'Grado', 'Grupo'];
+    const leadMerges = () => LEAD.map((_, c) => ({ s: { r: 0, c }, e: { r: 1, c } }));
+    const leadVals = (a) => [a.numero, a.nombre, a.grado == null ? '' : a.grado, a.grupo == null ? '' : a.grupo];
+    const leadCols = (c) => ({ wch: c === 1 ? 32 : c < 4 ? 6 : 11 });
+    const top = LEAD.slice();
+    const sub = LEAD.map(() => '');
+    const merges = leadMerges();
     state.materias.forEach((m) => {
       const start = top.length;
       m.evaluaciones.forEach((e, i) => {
@@ -275,7 +380,7 @@
     }
     const aoa = [top, sub];
     state.alumnos.forEach((a, i) => {
-      const row = [a.numero, a.nombre];
+      const row = leadVals(a);
       const cal = state.calificaciones[a.id] || {};
       const pa = results && results.porAlumno[i];
       state.materias.forEach((m, mi) => {
@@ -299,19 +404,16 @@
       name: 'Calificaciones',
       aoa,
       merges,
-      cols: top.map((_, c) => ({ wch: c === 1 ? 32 : c === 0 ? 5 : 11 })),
+      cols: top.map((_, c) => leadCols(c)),
     });
 
     if (!o.withResults || !results) return sheets;
 
     // --- Hoja 2: Tabla completa (toda la información en una hoja) ---
     {
-      const fTop = ['No.', 'Nombre'];
-      const fSub = ['', ''];
-      const fMerges = [
-        { s: { r: 0, c: 0 }, e: { r: 1, c: 0 } },
-        { s: { r: 0, c: 1 }, e: { r: 1, c: 1 } },
-      ];
+      const fTop = LEAD.slice();
+      const fSub = LEAD.map(() => '');
+      const fMerges = leadMerges();
       const addGroup = (name, labels) => {
         const start = fTop.length;
         labels.forEach((l, i) => {
@@ -327,7 +429,7 @@
       if (campos.length) addGroup('Otros datos', campos.map((cp) => cp.nombre));
       const fRows = results.porAlumno.map((pa) => {
         const cal = state.calificaciones[pa.alumno.id] || {};
-        const row = [pa.alumno.numero, pa.alumno.nombre];
+        const row = leadVals(pa.alumno);
         state.materias.forEach((m, mi) => {
           m.evaluaciones.forEach((e) => row.push(Stats.isNum(cal[e.id]) ? cal[e.id] : ''));
           const pm = pa.materias[mi];
@@ -341,12 +443,12 @@
         name: 'Tabla completa',
         aoa: [fTop, fSub].concat(fRows),
         merges: fMerges,
-        cols: fTop.map((_, c) => ({ wch: c === 1 ? 32 : c === 0 ? 5 : 10 })),
+        cols: fTop.map((_, c) => leadCols(c)),
       });
     }
 
     // --- Hoja 3: Resultados (ranking) ---
-    const rHead = ['Posición', 'No.', 'Nombre', 'Promedio general', 'Puntaje T', 'Top %', 'Materias reprobadas'];
+    const rHead = ['Posición', 'No.', 'Nombre', 'Grado', 'Grupo', 'Promedio general', 'Puntaje T', 'Top %', 'Materias reprobadas'];
     state.materias.forEach((m) => {
       rHead.push(m.nombre + ' – Prom.', m.nombre + ' – T', m.nombre + ' – Posición');
     });
@@ -361,6 +463,8 @@
         pa.rank == null ? '' : pa.rank,
         pa.alumno.numero,
         pa.alumno.nombre,
+        pa.alumno.grado == null ? '' : pa.alumno.grado,
+        pa.alumno.grupo == null ? '' : pa.alumno.grupo,
         round(pa.general, d),
         round(pa.tscore, 1),
         pa.top == null ? '' : round(pa.top, 1),
@@ -377,6 +481,21 @@
       merges: [],
       cols: rHead.map((_, c) => ({ wch: c === 2 ? 32 : 12 })),
     });
+
+    // --- Hoja: Comparación por grupo (sólo si hay varios grupos) ---
+    const Clases = root.Clases || (typeof require !== 'undefined' ? require('./clases.js') : null);
+    const resumen = Clases ? Clases.resumenPorClase(state, results) : [];
+    const porGrupo = resumen.length > 1
+      ? {
+          name: 'Por grupo',
+          aoa: [['Grado', 'Grupo', 'Alumnos', 'Promedio', 'Desv. estándar', 'Máximo', 'Mínimo', 'Alumnos con reprobadas']
+            .concat(state.materias.map((m) => m.nombre))]
+            .concat(resumen.map((r) => [r.grado, r.grupo, r.n, round(r.stats.mean, d), round(r.stats.sd, d), round(r.stats.max, d),
+              round(r.stats.min, d), r.conReprobadas].concat(r.materias.map((v) => round(v, d))))),
+          merges: [],
+          cols: new Array(8 + state.materias.length).fill({ wch: 12 }),
+        }
+      : null;
 
     // --- Hoja 4: Estadísticas por materia ---
     const sHead = ['Materia', 'Alumnos evaluados', 'Media', 'Desv. estándar', 'Mínimo', 'Máximo', 'Mediana', 'Reprobados'];
@@ -401,6 +520,7 @@
       round(g.median, d),
       results.porAlumno.filter((pa) => pa.reprobadas > 0).length,
     ]);
+    if (porGrupo) sheets.push(porGrupo);
     sheets.push({
       name: 'Estadísticas',
       aoa: [sHead].concat(sRows),
@@ -458,7 +578,7 @@
     XLSX.writeFile(wb, filename, { bookType: bookType || 'xlsx' });
   }
 
-  const Excel = { parseGrid, buildSheets, readFile, downloadWorkbook, parseNumber, splitPeso };
+  const Excel = { parseGrid, mergeImport, buildSheets, readFile, downloadWorkbook, parseNumber, splitPeso };
   if (typeof module !== 'undefined' && module.exports) module.exports = Excel;
   else root.Excel = Excel;
 })(typeof window !== 'undefined' ? window : globalThis);

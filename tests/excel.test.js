@@ -60,7 +60,8 @@ test('exportar y volver a importar conserva los datos (ida y vuelta)', () => {
   const sheets = Excel.buildSheets(state, res);
   assert.deepEqual(sheets.map((s) => s.name), ['Calificaciones', 'Tabla completa', 'Resultados', 'Estadísticas']);
   const full = sheets[1].aoa;
-  assert.deepEqual(full[1].slice(2, 8), ['P1 (25%)', 'Examen (75%)', 'Promedio', 'Puntaje T', 'Posición', 'Top %']);
+  assert.deepEqual(full[0].slice(0, 4), ['No.', 'Nombre', 'Grado', 'Grupo']);
+  assert.deepEqual(full[1].slice(4, 10), ['P1 (25%)', 'Examen (75%)', 'Promedio', 'Puntaje T', 'Posición', 'Top %']);
   assert.equal(full.length, 2 + state.alumnos.length);
   const back = Excel.parseGrid(sheets[0].aoa);
   assert.deepEqual(back.materias.map((m) => m.nombre), ['Matemáticas', 'Historia']);
@@ -99,4 +100,59 @@ test('datos adicionales (Otros datos): exportar e importar', () => {
   assert.equal(back.extras[back.alumnos[0].id][c1.id], 95);
   assert.equal(back.extras[back.alumnos[1].id][c2.id], 'Regular');
   assert.equal(back.extras[back.alumnos[1].id][c1.id], undefined);
+});
+
+test('importar a otro grupo no borra los demás y actualiza por nombre', () => {
+  const state = {
+    config: {},
+    materias: [{ id: 'm1', nombre: 'Matemáticas', evaluaciones: [{ id: 'e1', nombre: 'T1', peso: 1 }, { id: 'e2', nombre: 'T2', peso: 1 }] }],
+    alumnos: [
+      { id: 'a', numero: '1', nombre: 'Ana', grado: '1°', grupo: 'A' },
+      { id: 'b', numero: '1', nombre: 'Beto', grado: '1°', grupo: 'B' },
+    ],
+    calificaciones: { a: { e1: 9, e2: 8 }, b: { e1: 7 } },
+    campos: [],
+    extras: {},
+  };
+  // Archivo sin columnas de grado/grupo: se asigna al grupo actual (1° B).
+  const data = Excel.parseGrid([
+    ['No.', 'Nombre', 'Matemáticas', ''],
+    ['', '', 'T2', 'Examen'],
+    [1, 'Beto', 10, 9],
+    [2, 'Carla', 6, 7],
+  ]);
+  const { state: out, nuevos, actualizados } = Excel.mergeImport(state, data, { grado: '1°', grupo: 'B' });
+  assert.equal(nuevos, 1);
+  assert.equal(actualizados, 1);
+  assert.equal(out.alumnos.length, 3);
+  const [m] = out.materias;
+  assert.deepEqual(m.evaluaciones.map((e) => e.nombre), ['T1', 'T2', 'Examen']);
+  const ex = m.evaluaciones[2].id;
+  assert.deepEqual(out.calificaciones.a, { e1: 9, e2: 8 }); // 1° A intacto
+  assert.equal(out.calificaciones.b.e1, 7); // T1 no venía en el archivo: se conserva
+  assert.equal(out.calificaciones.b.e2, 10);
+  assert.equal(out.calificaciones.b[ex], 9);
+  const carla = out.alumnos.find((x) => x.nombre === 'Carla');
+  assert.equal(carla.grado + ' ' + carla.grupo, '1° B');
+  assert.deepEqual(state.alumnos.length, 2); // el estado original no se modifica
+});
+
+test('exportar incluye Grado/Grupo, hoja por grupo, y se vuelven a leer', () => {
+  const Clases = require('../js/clases.js');
+  const state = {
+    config: { aprobatoria: 6 },
+    materias: [{ id: 'm1', nombre: 'Español', evaluaciones: [{ id: 'e1', nombre: 'T1', peso: 1 }] }],
+    alumnos: [
+      { id: 'a', numero: '1', nombre: 'Ana', grado: '2°', grupo: 'A' },
+      { id: 'b', numero: '1', nombre: 'Beto', grado: '2°', grupo: 'B' },
+    ],
+    calificaciones: { a: { e1: 9 }, b: { e1: 7 } },
+  };
+  const view = Clases.buildView(state, 'all');
+  const sheets = Excel.buildSheets(view, Stats.computeResults(view));
+  assert.ok(sheets.some((s) => s.name === 'Por grupo'));
+  const back = Excel.parseGrid(sheets[0].aoa);
+  assert.equal(back.hasGrado && back.hasGrupo, true);
+  assert.deepEqual(back.alumnos.map((a) => a.grado + a.grupo), ['2°A', '2°B']);
+  assert.deepEqual(back.materias.map((m) => m.nombre), ['Español']);
 });
