@@ -55,6 +55,7 @@
   .t{min-width:110px}.tbar{position:relative;height:8px;background:var(--soft);border-radius:4px;margin:3px 2px 2px}
   .tbar .mid{position:absolute;left:50%;top:-3px;bottom:-3px;width:1px;background:var(--muted)}
   .tbar .dot{position:absolute;top:-3px;width:14px;height:14px;margin-left:-7px;border-radius:50%;background:var(--accent);border:2px solid #fff;box-shadow:0 0 0 1px var(--accent)}
+  table.extras{width:auto;min-width:50%}table.extras th{width:1%;white-space:nowrap}table.extras td{white-space:normal}
   .note{font-size:12px;color:var(--muted);margin-top:14px}
   .firmas{display:flex;justify-content:space-around;margin-top:56px;gap:40px}
   .firmas div{flex:1;border-top:1px solid var(--ink);text-align:center;padding-top:4px;font-size:12px;color:var(--muted)}
@@ -232,6 +233,17 @@
         .map((m) => esc(m.nombre) + ': ' + m.evaluaciones.map((e, k) => 'Eval. ' + (k + 1) + ' = ' + esc(e.nombre)).join(', '))
         .join(' · ');
       h += '<p class="note">' + evalNames + '</p>';
+    }
+    const campos = state.campos || [];
+    if (campos.length) {
+      const ex = (state.extras || {})[pa.alumno.id] || {};
+      h += '<h2>Otros datos</h2><div class="tw"><table class="extras"><tbody>';
+      campos.forEach((cp) => {
+        const v = ex[cp.id];
+        const txt = v == null || v === '' ? '—' : Stats.isNum(v) ? String(Math.round(v * 100) / 100) : esc(v);
+        h += '<tr><th class="n">' + esc(cp.nombre) + '</th><td class="n">' + txt + '</td></tr>';
+      });
+      h += '</tbody></table></div>';
     }
     if (pa.reprobadas > 0) {
       h += '<p class="note" style="color:#b91c1c"><b>Atención:</b> ' + pa.reprobadas + ' materia(s) por debajo de la calificación aprobatoria.</p>';

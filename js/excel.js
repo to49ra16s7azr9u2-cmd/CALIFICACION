@@ -32,6 +32,8 @@
   const RE_NUMERO = /^(no\.?|num\.?|numero|n°|#|lista|no\. lista|no de lista)$/;
   // Columnas calculadas que no se importan.
   const RE_CALC = /^(prom\.?|promedio.*|general|puntaje t|puntaje|t|posicion|lugar|ranking|top.*|% superior|percentil|reprobadas|materias reprobadas|desv.*)$/;
+  // Grupo de datos adicionales (campos personalizados, no cuentan en el promedio).
+  const RE_EXTRA = /^(otros datos|datos adicionales|datos extra|otros)$/;
   const RE_PESO = /\s*\((\d+(?:[.,]\d+)?)\s*%\)\s*$/;
 
   let idCounter = 0;
@@ -102,7 +104,9 @@
     }
 
     const materias = [];
-    const colMap = []; // { col, evalId }
+    const colMap = []; // { col, evalId } o { col, campoId }
+    const campos = [];
+    const EXTRA = {};
     if (twoLevel) {
       let current = null; // materia actual (o null si se debe ignorar)
       let currentLabel = null;
@@ -115,7 +119,9 @@
         const t = top[c];
         if (!isEmpty(t)) {
           currentLabel = String(t).trim();
-          if (RE_CALC.test(norm(currentLabel))) {
+          if (RE_EXTRA.test(norm(currentLabel))) {
+            current = EXTRA;
+          } else if (RE_CALC.test(norm(currentLabel))) {
             current = null;
           } else {
             current = { id: newId('m'), nombre: currentLabel, evaluaciones: [] };
@@ -124,6 +130,14 @@
         }
         if (!current) continue;
         const s = sub[c];
+        if (current === EXTRA) {
+          if (!isEmpty(s)) {
+            const cp = { id: newId('c'), nombre: String(s).trim(), tipo: 'texto', opciones: [] };
+            campos.push(cp);
+            colMap.push({ col: c, campoId: cp.id });
+          }
+          continue;
+        }
         if (isEmpty(s)) {
           // Materia sin subcolumnas: una sola evaluación.
           if (!isEmpty(t)) {
@@ -157,6 +171,7 @@
 
     const alumnos = [];
     const calificaciones = {};
+    const extras = {};
     const start = h + (twoLevel ? 2 : 1);
     for (let r = start; r < rows.length; r++) {
       const row = rows[r];
@@ -169,14 +184,31 @@
       };
       alumnos.push(a);
       const cal = {};
-      colMap.forEach(({ col, evalId }) => {
+      const ex = {};
+      colMap.forEach(({ col, evalId, campoId }) => {
+        if (campoId) {
+          if (!isEmpty(row[col])) ex[campoId] = typeof row[col] === 'number' ? row[col] : String(row[col]).trim();
+          return;
+        }
         const n = parseNumber(row[col]);
         if (n !== null) cal[evalId] = n;
       });
       calificaciones[a.id] = cal;
+      extras[a.id] = ex;
     }
 
-    return { materias: cleanMaterias, alumnos, calificaciones, twoLevel };
+    // Un dato adicional cuyos valores son todos números se toma como numérico.
+    campos.forEach((cp) => {
+      const vals = alumnos.map((a) => extras[a.id][cp.id]).filter((v) => v != null);
+      if (vals.length && vals.every((v) => parseNumber(v) !== null)) {
+        cp.tipo = 'numero';
+        alumnos.forEach((a) => {
+          if (extras[a.id][cp.id] != null) extras[a.id][cp.id] = parseNumber(extras[a.id][cp.id]);
+        });
+      }
+    });
+
+    return { materias: cleanMaterias, alumnos, calificaciones, campos, extras, twoLevel };
   }
 
   function round(v, d) {
@@ -201,6 +233,11 @@
     const o = Object.assign({ withResults: true, decimals: 2 }, opts || {});
     const d = o.decimals;
     const sheets = [];
+    const campos = state.campos || [];
+    const extraVals = (a) => campos.map((cp) => {
+      const v = ((state.extras || {})[a.id] || {})[cp.id];
+      return v == null ? '' : v;
+    });
 
     // --- Hoja 1: Calificaciones (dos niveles) ---
     const top = ['No.', 'Nombre'];
@@ -228,6 +265,14 @@
       sub.push('Promedio', 'Puntaje T', 'Posición', 'Top %');
       merges.push({ s: { r: 0, c: start }, e: { r: 0, c: start + 3 } });
     }
+    if (campos.length) {
+      const start = top.length;
+      campos.forEach((cp, i) => {
+        top.push(i === 0 ? 'Otros datos' : '');
+        sub.push(cp.nombre);
+      });
+      if (campos.length > 1) merges.push({ s: { r: 0, c: start }, e: { r: 0, c: start + campos.length - 1 } });
+    }
     const aoa = [top, sub];
     state.alumnos.forEach((a, i) => {
       const row = [a.numero, a.nombre];
@@ -247,6 +292,7 @@
           pa.top == null ? '' : round(pa.top, 1)
         );
       }
+      row.push(...extraVals(a));
       aoa.push(row);
     });
     sheets.push({
@@ -278,6 +324,7 @@
         addGroup(m.nombre, m.evaluaciones.map((e) => evalLabel(m, e)).concat(['Promedio', 'Puntaje T', 'Posición', 'Top %']))
       );
       addGroup('General', ['Promedio', 'Puntaje T', 'Posición', 'Top %', 'Materias reprobadas']);
+      if (campos.length) addGroup('Otros datos', campos.map((cp) => cp.nombre));
       const fRows = results.porAlumno.map((pa) => {
         const cal = state.calificaciones[pa.alumno.id] || {};
         const row = [pa.alumno.numero, pa.alumno.nombre];
@@ -287,6 +334,7 @@
           row.push(round(pm.promedio, d), round(pm.tscore, 1), pm.rank == null ? '' : pm.rank, pm.top == null ? '' : round(pm.top, 1));
         });
         row.push(round(pa.general, d), round(pa.tscore, 1), pa.rank == null ? '' : pa.rank, pa.top == null ? '' : round(pa.top, 1), pa.reprobadas);
+        row.push(...extraVals(pa.alumno));
         return row;
       });
       sheets.push({

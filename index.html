@@ -66,6 +66,7 @@
           <label><input type="checkbox" id="ov-t" checked> Puntaje T</label>
           <label><input type="checkbox" id="ov-rank" checked> Posición</label>
           <label><input type="checkbox" id="ov-top" checked> Top %</label>
+          <label><input type="checkbox" id="ov-extras" checked> Otros datos</label>
           <label><input type="checkbox" id="ov-foot" checked> Estadísticas del grupo</label>
         </div>
         <div class="grade-wrap">
@@ -121,6 +122,25 @@
           <input type="text" id="new-materia" placeholder="Nombre de la materia (p. ej., Matemáticas)">
           <input type="text" id="new-evals" value="Trimestre 1, Trimestre 2, Trimestre 3" title="Evaluaciones separadas por comas">
           <button class="btn" id="btn-add-materia">➕ Agregar materia</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Otros datos <span class="muted small">(campos personalizados)</span></h2>
+        <p class="muted small">
+          Agregue cualquier dato que quiera registrar por alumno: asistencia, conducta, tareas entregadas, observaciones, teléfono del tutor…
+          Aparecen en «Calificaciones» para capturarlos, en «Vista general», en las boletas y en Excel. No cuentan para el promedio.
+        </p>
+        <div id="campos-editor"></div>
+        <div class="row">
+          <input type="text" id="new-campo" placeholder="Nombre del dato (p. ej., Asistencia %)">
+          <select id="new-campo-tipo" aria-label="Tipo de dato">
+            <option value="texto">Texto libre</option>
+            <option value="numero">Número</option>
+            <option value="lista">Lista de opciones</option>
+          </select>
+          <input type="text" id="new-campo-opciones" placeholder="Opciones separadas por comas (sólo para lista)" hidden>
+          <button class="btn" id="btn-add-campo">➕ Agregar dato</button>
         </div>
       </div>
     </section>

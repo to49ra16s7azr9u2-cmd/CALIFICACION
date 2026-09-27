@@ -42,7 +42,27 @@
       });
       calificaciones[a.id] = cal;
     });
+    const campos = [
+      { id: 'c0', nombre: 'Asistencia %', tipo: 'numero', opciones: [] },
+      { id: 'c1', nombre: 'Conducta', tipo: 'lista', opciones: ['Excelente', 'Buena', 'Regular', 'Necesita mejorar'] },
+      { id: 'c2', nombre: 'Tareas entregadas', tipo: 'numero', opciones: [] },
+      { id: 'c3', nombre: 'Observaciones', tipo: 'texto', opciones: [] },
+    ];
+    const OBS = ['', '', '', 'Participa mucho en clase', 'Debe entregar tareas a tiempo', 'Mejoró este trimestre', ''];
+    const extras = {};
+    alumnos.forEach((a) => {
+      const ex = {
+        c0: Math.round(80 + rnd() * 20),
+        c1: campos[1].opciones[Math.min(3, Math.floor(rnd() * 4.2))],
+        c2: Math.round(12 + rnd() * 8),
+      };
+      const o = OBS[Math.floor(rnd() * OBS.length)];
+      if (o) ex.c3 = o;
+      extras[a.id] = ex;
+    });
     return {
+      campos,
+      extras,
       config: {
         escuela: 'Escuela Secundaria General "Benito Juárez"',
         grupo: '2° A',

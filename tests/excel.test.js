@@ -71,3 +71,32 @@ test('exportar y volver a importar conserva los datos (ida y vuelta)', () => {
     assert.equal(pa.rank, res2.porAlumno[i].rank);
   });
 });
+
+test('datos adicionales (Otros datos): exportar e importar', () => {
+  const state = {
+    config: { aprobatoria: 6 },
+    materias: [{ id: 'm1', nombre: 'Matemáticas', evaluaciones: [{ id: 'e1', nombre: 'P1', peso: 1 }] }],
+    alumnos: [
+      { id: 'a', numero: '1', nombre: 'Ana' },
+      { id: 'b', numero: '2', nombre: 'Luis' },
+    ],
+    calificaciones: { a: { e1: 9 }, b: { e1: 7 } },
+    campos: [
+      { id: 'c1', nombre: 'Asistencia %', tipo: 'numero', opciones: [] },
+      { id: 'c2', nombre: 'Conducta', tipo: 'lista', opciones: ['Buena', 'Regular'] },
+    ],
+    extras: { a: { c1: 95, c2: 'Buena' }, b: { c2: 'Regular' } },
+  };
+  const sheets = Excel.buildSheets(state, Stats.computeResults(state));
+  const aoa = sheets[0].aoa;
+  assert.deepEqual(aoa[0].slice(-2), ['Otros datos', '']);
+  assert.deepEqual(aoa[1].slice(-2), ['Asistencia %', 'Conducta']);
+  assert.deepEqual(sheets[1].aoa[2].slice(-2), [95, 'Buena']);
+  const back = Excel.parseGrid(aoa);
+  assert.deepEqual(back.materias.map((m) => m.nombre), ['Matemáticas']);
+  assert.deepEqual(back.campos.map((c) => [c.nombre, c.tipo]), [['Asistencia %', 'numero'], ['Conducta', 'texto']]);
+  const [c1, c2] = back.campos;
+  assert.equal(back.extras[back.alumnos[0].id][c1.id], 95);
+  assert.equal(back.extras[back.alumnos[1].id][c2.id], 'Regular');
+  assert.equal(back.extras[back.alumnos[1].id][c1.id], undefined);
+});

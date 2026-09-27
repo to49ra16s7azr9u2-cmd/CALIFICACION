@@ -231,6 +231,23 @@ td.tcell { min-width: 150px; }
 .kpi .l { font-size: 12px; color: var(--muted); }
 .kpi .v { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
+/* Otros datos (campos personalizados) */
+table.grades thead th.extra-th { background: #475569; color: #fff; font-size: 13px; }
+table.grades td.xcell input, table.grades td.xcell select {
+  width: 120px;
+  border: 0;
+  border-radius: 0;
+  padding: 6px 4px;
+  background: transparent;
+  font: inherit;
+}
+table.grades td.xcell input.num { width: 72px; text-align: center; }
+table.grades td.xcell input:focus, table.grades td.xcell select:focus { outline: 2px solid #475569; outline-offset: -2px; background: #fff; }
+table.overview td.xtext { text-align: left; white-space: normal; min-width: 120px; max-width: 260px; }
+.campo { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
+.campo input[data-cf="nombre"] { flex: 1; min-width: 160px; font-weight: 600; }
+.campo input[data-cf="opciones"] { flex: 2; min-width: 200px; }
+
 /* Vista general */
 .ov-toggles { gap: 14px; }
 .ov-toggles label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }

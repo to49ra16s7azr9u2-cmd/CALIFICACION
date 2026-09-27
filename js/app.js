@@ -25,7 +25,7 @@
   // ---------------- Estado ----------------
 
   function emptyState() {
-    return { config: Object.assign({}, DEFAULT_CONFIG), materias: [], alumnos: [], calificaciones: {} };
+    return { config: Object.assign({}, DEFAULT_CONFIG), materias: [], alumnos: [], calificaciones: {}, campos: [], extras: {} };
   }
 
   function normalize(s) {
@@ -36,6 +36,8 @@
       materias: Array.isArray(s.materias) ? s.materias : [],
       alumnos: Array.isArray(s.alumnos) ? s.alumnos : [],
       calificaciones: s.calificaciones && typeof s.calificaciones === 'object' ? s.calificaciones : {},
+      campos: Array.isArray(s.campos) ? s.campos : [],
+      extras: s.extras && typeof s.extras === 'object' ? s.extras : {},
     };
   }
 
@@ -90,6 +92,26 @@
 
   function isBad(v) {
     return isNum(v) && v < Number(state.config.aprobatoria);
+  }
+
+  // Valor de un campo personalizado para un alumno.
+  function extraOf(alumnoId, campo) {
+    const v = (state.extras[alumnoId] || {})[campo.id];
+    return v == null ? '' : v;
+  }
+
+  function setExtra(alumnoId, campo, raw) {
+    const row = state.extras[alumnoId] || (state.extras[alumnoId] = {});
+    const txt = String(raw == null ? '' : raw).trim();
+    if (txt === '') delete row[campo.id];
+    else if (campo.tipo === 'numero') {
+      const n = Excel.parseNumber(txt);
+      row[campo.id] = n === null ? txt : n;
+    } else row[campo.id] = txt;
+  }
+
+  function extraText(v) {
+    return isNum(v) ? String(Math.round(v * 100) / 100) : esc(v);
   }
 
   // ---------------- Utilidades de interfaz ----------------
@@ -176,6 +198,7 @@
       t: $('#ov-t').checked,
       rank: $('#ov-rank').checked,
       top: $('#ov-top').checked,
+      extras: $('#ov-extras').checked,
       foot: $('#ov-foot').checked,
     };
 
@@ -205,12 +228,24 @@
         { label: 'Reprobadas', kind: 'count', get: (pa) => pa.reprobadas },
       ],
     });
+    if (show.extras && state.campos.length) {
+      groups.push({
+        name: 'Otros datos',
+        cls: 'extra-th',
+        cols: state.campos.map((cp) => ({
+          label: cp.nombre,
+          kind: cp.tipo === 'numero' ? 'xnum' : 'xtext',
+          get: (pa) => extraOf(pa.alumno.id, cp),
+        })),
+      });
+    }
 
     const cellText = (col, v) => {
       if (col.kind === 'rank') return v == null ? '—' : v + '/' + col.n;
       if (col.kind === 'top') return v == null ? '—' : fmt(v, 1) + '%';
       if (col.kind === 't') return fmt(v, 1);
       if (col.kind === 'count') return v;
+      if (col.kind === 'xnum' || col.kind === 'xtext') return extraText(v);
       return fmt(v);
     };
 
@@ -245,7 +280,7 @@
         g.cols.forEach((col, k) => {
           const v = col.get(pa);
           const bad = (col.kind === 'grade' || col.kind === 'prom') && isBad(v);
-          const cls = [k === 0 ? 'sep-l' : '', col.kind === 'prom' ? 'pr' : '', bad ? 'bad' : '', col.kind === 'count' && v > 0 ? 'bad' : '']
+          const cls = [k === 0 ? 'sep-l' : '', col.kind === 'prom' ? 'pr' : '', bad ? 'bad' : '', col.kind === 'count' && v > 0 ? 'bad' : '', col.kind === 'xtext' ? 'xtext' : '']
             .join(' ')
             .trim();
           body += '<td' + (cls ? ' class="' + cls + '"' : '') + '>' + cellText(col, v) + '</td>';
@@ -267,7 +302,7 @@
       ];
       const descs = groups.map((g) =>
         g.cols.map((col) =>
-          col.kind === 'grade' || col.kind === 'prom' ? Stats.describe(results.porAlumno.map((pa) => col.get(pa))) : null
+          ['grade', 'prom', 'xnum'].includes(col.kind) ? Stats.describe(results.porAlumno.map((pa) => col.get(pa))) : null
         )
       );
       statRows.forEach(([label, key]) => {
@@ -288,7 +323,7 @@
   }
 
   function bindOverview() {
-    ['#ov-evals', '#ov-prom', '#ov-t', '#ov-rank', '#ov-top', '#ov-foot', '#ov-order'].forEach((sel) =>
+    ['#ov-evals', '#ov-prom', '#ov-t', '#ov-rank', '#ov-top', '#ov-extras', '#ov-foot', '#ov-order'].forEach((sel) =>
       $(sel).addEventListener('change', renderOverview)
     );
     $('#ov-search').addEventListener('input', renderOverview);
@@ -303,6 +338,97 @@
     });
     renderAlumnos();
     renderMaterias();
+    renderCampos();
+  }
+
+  const TIPOS = { texto: 'Texto libre', numero: 'Número', lista: 'Lista de opciones' };
+
+  function renderCampos() {
+    const box = $('#campos-editor');
+    if (!state.campos.length) {
+      box.innerHTML = '<div class="empty">Aún no hay datos adicionales. Ejemplos: Asistencia %, Conducta, Tareas entregadas, Observaciones.</div>';
+      return;
+    }
+    box.innerHTML = state.campos
+      .map(
+        (cp, i) =>
+          '<div class="campo"><input type="text" data-ci="' + i + '" data-cf="nombre" value="' + esc(cp.nombre) + '" aria-label="Nombre del dato">' +
+          '<select data-ci="' + i + '" data-cf="tipo" aria-label="Tipo">' +
+          Object.keys(TIPOS).map((t) => '<option value="' + t + '"' + (cp.tipo === t ? ' selected' : '') + '>' + TIPOS[t] + '</option>').join('') +
+          '</select>' +
+          (cp.tipo === 'lista'
+            ? '<input type="text" data-ci="' + i + '" data-cf="opciones" value="' + esc((cp.opciones || []).join(', ')) + '" placeholder="Opciones separadas por comas">'
+            : '') +
+          '<button class="btn ghost" data-cmv="' + i + ':-1" title="Subir">▲</button>' +
+          '<button class="btn ghost" data-cmv="' + i + ':1" title="Bajar">▼</button>' +
+          '<button class="btn ghost danger" data-cdel="' + i + '">Eliminar</button></div>'
+      )
+      .join('');
+  }
+
+  function parseOpciones(txt) {
+    return String(txt || '').split(',').map((s) => s.trim()).filter(Boolean);
+  }
+
+  function bindCampos() {
+    $('#new-campo-tipo').addEventListener('change', () => {
+      $('#new-campo-opciones').hidden = $('#new-campo-tipo').value !== 'lista';
+    });
+    $('#btn-add-campo').addEventListener('click', () => {
+      const nombre = $('#new-campo').value.trim();
+      if (!nombre) return toast('Escriba el nombre del dato.', true);
+      const tipo = $('#new-campo-tipo').value;
+      const opciones = parseOpciones($('#new-campo-opciones').value);
+      if (tipo === 'lista' && !opciones.length) return toast('Escriba las opciones separadas por comas.', true);
+      state.campos.push({ id: newId('c'), nombre, tipo, opciones });
+      $('#new-campo').value = '';
+      $('#new-campo-opciones').value = '';
+      save();
+      renderCampos();
+      toast('Dato «' + nombre + '» agregado. Captúrelo en «Calificaciones».');
+    });
+    const box = $('#campos-editor');
+    box.addEventListener('input', (ev) => {
+      const t = ev.target;
+      if (t.dataset.ci == null || t.tagName === 'SELECT') return;
+      const cp = state.campos[Number(t.dataset.ci)];
+      if (t.dataset.cf === 'nombre') cp.nombre = t.value;
+      if (t.dataset.cf === 'opciones') cp.opciones = parseOpciones(t.value);
+      save();
+    });
+    box.addEventListener('change', (ev) => {
+      const t = ev.target;
+      if (t.dataset.cf !== 'tipo') return;
+      const cp = state.campos[Number(t.dataset.ci)];
+      cp.tipo = t.value;
+      if (cp.tipo === 'lista' && !(cp.opciones || []).length) {
+        // Propone como opciones los valores ya capturados.
+        const vals = new Set();
+        Object.values(state.extras).forEach((row) => row[cp.id] != null && vals.add(String(row[cp.id])));
+        cp.opciones = [...vals].slice(0, 20);
+      }
+      if (cp.tipo === 'numero') Object.keys(state.extras).forEach((id) => setExtra(id, cp, state.extras[id][cp.id]));
+      save();
+      renderCampos();
+    });
+    box.addEventListener('click', (ev) => {
+      const b = ev.target.closest('button');
+      if (!b) return;
+      if (b.dataset.cdel != null) {
+        const i = Number(b.dataset.cdel);
+        const cp = state.campos[i];
+        if (!confirm('¿Eliminar el dato «' + cp.nombre + '» y lo capturado para todos los alumnos?')) return;
+        state.campos.splice(i, 1);
+        Object.values(state.extras).forEach((row) => delete row[cp.id]);
+      } else if (b.dataset.cmv != null) {
+        const [i, dir] = b.dataset.cmv.split(':').map(Number);
+        const j = i + dir;
+        if (j < 0 || j >= state.campos.length) return;
+        [state.campos[i], state.campos[j]] = [state.campos[j], state.campos[i]];
+      } else return;
+      save();
+      renderCampos();
+    });
   }
 
   function renderAlumnos() {
@@ -488,8 +614,16 @@
       });
       h2 += '<th>Prom.</th>';
     });
-    h1 += '<th class="general-th sep-l" colspan="4">General</th></tr>';
-    h2 += '<th class="sep-l">Promedio</th><th>Puntaje T</th><th>Posición</th><th>Top %</th></tr>';
+    h1 += '<th class="general-th sep-l" colspan="4">General</th>';
+    h2 += '<th class="sep-l">Promedio</th><th>Puntaje T</th><th>Posición</th><th>Top %</th>';
+    if (state.campos.length) {
+      h1 += '<th class="extra-th sep-l" colspan="' + state.campos.length + '">Otros datos</th>';
+      state.campos.forEach((cp, k) => {
+        h2 += '<th' + (k === 0 ? ' class="sep-l"' : '') + '>' + esc(cp.nombre) + '</th>';
+      });
+    }
+    h1 += '</tr>';
+    h2 += '</tr>';
 
     const flat = evalList();
     let body = '';
@@ -509,7 +643,22 @@
       });
       body +=
         '<td class="calc sep-l" data-g="' + r + ':prom"></td><td class="calc" data-g="' + r + ':t"></td>' +
-        '<td class="calc" data-g="' + r + ':rank"></td><td class="calc" data-g="' + r + ':top"></td></tr>';
+        '<td class="calc" data-g="' + r + ':rank"></td><td class="calc" data-g="' + r + ':top"></td>';
+      state.campos.forEach((cp, k) => {
+        const v = extraOf(a.id, cp);
+        const attrs = ' data-xr="' + r + '" data-xf="' + k + '" aria-label="' + esc(a.nombre + ' – ' + cp.nombre) + '"';
+        let ctl;
+        if (cp.tipo === 'lista') {
+          const opts = (cp.opciones || []).slice();
+          if (v !== '' && !opts.includes(String(v))) opts.push(String(v));
+          ctl = '<select' + attrs + '><option value=""></option>' +
+            opts.map((o) => '<option' + (String(v) === o ? ' selected' : '') + '>' + esc(o) + '</option>').join('') + '</select>';
+        } else {
+          ctl = '<input' + attrs + (cp.tipo === 'numero' ? ' class="num" inputmode="decimal"' : '') + ' value="' + esc(v) + '">';
+        }
+        body += '<td class="xcell' + (k === 0 ? ' sep-l' : '') + '">' + ctl + '</td>';
+      });
+      body += '</tr>';
     });
     table.innerHTML = '<thead>' + h1 + h2 + '</thead><tbody>' + body + '</tbody>';
     table.dataset.cols = flat.length;
@@ -585,6 +734,25 @@
 
   function bindGrades() {
     const table = $('#grades-table');
+    const onExtra = (ev) => {
+      const t = ev.target;
+      if (t.dataset.xr == null) return;
+      const a = state.alumnos[Number(t.dataset.xr)];
+      const cp = state.campos[Number(t.dataset.xf)];
+      if (a && cp) {
+        setExtra(a.id, cp, t.value);
+        save();
+      }
+    };
+    table.addEventListener('input', onExtra);
+    table.addEventListener('change', onExtra);
+    table.addEventListener('keydown', (ev) => {
+      const t = ev.target;
+      if (t.dataset.xr == null || t.tagName === 'SELECT' || ev.key !== 'Enter') return;
+      ev.preventDefault();
+      const next = table.querySelector('[data-xr="' + (Number(t.dataset.xr) + (ev.shiftKey ? -1 : 1)) + '"][data-xf="' + t.dataset.xf + '"]');
+      if (next) next.focus();
+    });
     table.addEventListener('input', (ev) => {
       const t = ev.target;
       if (t.dataset.r == null) return;
@@ -884,6 +1052,18 @@
         state.materias = data.materias;
         state.alumnos = data.alumnos;
         state.calificaciones = data.calificaciones;
+        // Conserva el tipo de los datos adicionales que ya existían con el mismo nombre.
+        const prev = {};
+        state.campos.forEach((cp) => (prev[cp.nombre.trim().toLowerCase()] = cp));
+        data.campos.forEach((cp) => {
+          const old = prev[cp.nombre.trim().toLowerCase()];
+          if (old) {
+            cp.tipo = old.tipo;
+            cp.opciones = old.opciones;
+          }
+        });
+        state.campos = data.campos;
+        state.extras = data.extras;
         save();
         toast('Importado: ' + data.alumnos.length + ' alumnos, ' + data.materias.length + ' materias.');
         showTab('grades');
@@ -902,7 +1082,7 @@
     });
     $('#btn-template').addEventListener('click', () => {
       const tpl = state.materias.length
-        ? { materias: state.materias, alumnos: state.alumnos.length ? state.alumnos : [{ id: 'x', numero: '1', nombre: '' }], calificaciones: {} }
+        ? { materias: state.materias, campos: state.campos, extras: {}, alumnos: state.alumnos.length ? state.alumnos : [{ id: 'x', numero: '1', nombre: '' }], calificaciones: {} }
         : {
             materias: ['Español', 'Matemáticas', 'Ciencias'].map((n, i) => ({
               id: 'm' + i,
@@ -958,6 +1138,7 @@
   bindToolbar();
   bindOverview();
   bindConfig();
+  bindCampos();
   bindGrades();
   bindResults();
   bindReport();
