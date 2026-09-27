@@ -50,16 +50,23 @@
   }
 
   let saveTimer = null;
+  function saveNow() {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (e) {
+      toast('No se pudo guardar en el navegador. Use «Respaldo (JSON)».', true);
+    }
+  }
   function save() {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-      } catch (e) {
-        toast('No se pudo guardar en el navegador. Use «Respaldo (JSON)».', true);
-      }
-    }, 250);
+    saveTimer = setTimeout(saveNow, 250);
   }
+  // Guarda lo pendiente si se cierra o recarga la página.
+  window.addEventListener('pagehide', () => {
+    if (saveTimer) saveNow();
+  });
 
   let uid = 0;
   function newId(p) {
@@ -142,13 +149,152 @@
   function renderActive() {
     renderHeader();
     compute();
+    if (activeTab === 'overview') renderOverview();
     if (activeTab === 'config') renderConfig();
     if (activeTab === 'grades') renderGrades();
     if (activeTab === 'results') renderResults();
     if (activeTab === 'report') renderReport();
   }
 
-  // ---------------- 1. Configuración ----------------
+  // ---------------- Vista general (toda la información en una tabla) ----------------
+
+  function renderOverview() {
+    const c = state.config;
+    $('#ov-meta').textContent = [c.escuela, c.grupo && 'Grupo ' + c.grupo, c.ciclo, c.maestro]
+      .filter(Boolean)
+      .join(' · ') +
+      (results.general.n ? ' · ' + state.alumnos.length + ' alumnos · Promedio del grupo ' + fmt(results.general.mean) : '');
+    const table = $('#ov-table');
+    if (!state.materias.length || !state.alumnos.length) {
+      table.innerHTML =
+        '<tbody><tr><td class="empty">Aún no hay datos. Agregue alumnos y materias en «Configuración», importe un archivo de Excel o cargue los datos de ejemplo.</td></tr></tbody>';
+      return;
+    }
+    const show = {
+      evals: $('#ov-evals').checked,
+      prom: $('#ov-prom').checked,
+      t: $('#ov-t').checked,
+      rank: $('#ov-rank').checked,
+      top: $('#ov-top').checked,
+      foot: $('#ov-foot').checked,
+    };
+
+    // Definición de columnas: [{group, label, get(pa, i), stat:boolean, kind}]
+    const groups = [];
+    state.materias.forEach((m, mi) => {
+      const cols = [];
+      if (show.evals) {
+        m.evaluaciones.forEach((e) =>
+          cols.push({ label: e.nombre, kind: 'grade', get: (pa) => (state.calificaciones[pa.alumno.id] || {})[e.id] })
+        );
+      }
+      if (show.prom) cols.push({ label: 'Prom.', kind: 'prom', get: (pa) => pa.materias[mi].promedio });
+      if (show.t) cols.push({ label: 'T', kind: 't', get: (pa) => pa.materias[mi].tscore });
+      if (show.rank) cols.push({ label: 'Pos.', kind: 'rank', n: results.perMateria[mi].stats.n, get: (pa) => pa.materias[mi].rank });
+      if (show.top) cols.push({ label: 'Top %', kind: 'top', get: (pa) => pa.materias[mi].top });
+      if (cols.length) groups.push({ name: m.nombre, cols, cls: 'materia-th' });
+    });
+    groups.push({
+      name: 'General',
+      cls: 'general-th',
+      cols: [
+        { label: 'Promedio', kind: 'prom', get: (pa) => pa.general },
+        { label: 'Puntaje T', kind: 't', get: (pa) => pa.tscore },
+        { label: 'Posición', kind: 'rank', n: results.general.n, get: (pa) => pa.rank },
+        { label: 'Top %', kind: 'top', get: (pa) => pa.top },
+        { label: 'Reprobadas', kind: 'count', get: (pa) => pa.reprobadas },
+      ],
+    });
+
+    const cellText = (col, v) => {
+      if (col.kind === 'rank') return v == null ? '—' : v + '/' + col.n;
+      if (col.kind === 'top') return v == null ? '—' : fmt(v, 1) + '%';
+      if (col.kind === 't') return fmt(v, 1);
+      if (col.kind === 'count') return v;
+      return fmt(v);
+    };
+
+    let h1 = '<tr><th class="sticky c0" rowspan="2">No.</th><th class="sticky c1" rowspan="2">Nombre</th>';
+    let h2 = '<tr>';
+    groups.forEach((g) => {
+      h1 += '<th class="' + g.cls + ' sep-l" colspan="' + g.cols.length + '">' + esc(g.name) + '</th>';
+      g.cols.forEach((col, k) => {
+        const cls = [k === 0 ? 'sep-l' : '', col.kind === 'grade' ? '' : 'sub'].join(' ').trim();
+        h2 += '<th' + (cls ? ' class="' + cls + '"' : '') + '>' + esc(col.label) + '</th>';
+      });
+    });
+    h1 += '</tr>';
+    h2 += '</tr>';
+
+    const q = $('#ov-search').value.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    let rows = results.porAlumno.slice();
+    if (q) {
+      rows = rows.filter((pa) =>
+        pa.alumno.nombre.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(q)
+      );
+    }
+    const order = $('#ov-order').value;
+    if (order === 'rank') rows.sort((a, b) => (a.rank == null ? 1e9 : a.rank) - (b.rank == null ? 1e9 : b.rank));
+    if (order === 'nombre') rows.sort((a, b) => a.alumno.nombre.localeCompare(b.alumno.nombre, 'es'));
+
+    let body = '';
+    rows.forEach((pa) => {
+      body += '<tr' + (pa.rank != null && pa.rank <= 3 ? ' class="top3"' : '') + '>';
+      body += '<td class="sticky c0">' + esc(pa.alumno.numero) + '</td><td class="sticky c1">' + esc(pa.alumno.nombre) + '</td>';
+      groups.forEach((g) =>
+        g.cols.forEach((col, k) => {
+          const v = col.get(pa);
+          const bad = (col.kind === 'grade' || col.kind === 'prom') && isBad(v);
+          const cls = [k === 0 ? 'sep-l' : '', col.kind === 'prom' ? 'pr' : '', bad ? 'bad' : '', col.kind === 'count' && v > 0 ? 'bad' : '']
+            .join(' ')
+            .trim();
+          body += '<td' + (cls ? ' class="' + cls + '"' : '') + '>' + cellText(col, v) + '</td>';
+        })
+      );
+      body += '</tr>';
+    });
+    if (!rows.length) {
+      body = '<tr><td class="empty" colspan="99">Ningún alumno coincide con «' + esc($('#ov-search').value) + '».</td></tr>';
+    }
+
+    let foot = '';
+    if (show.foot) {
+      const statRows = [
+        ['Media del grupo', 'mean'],
+        ['Desv. estándar', 'sd'],
+        ['Máximo', 'max'],
+        ['Mínimo', 'min'],
+      ];
+      const descs = groups.map((g) =>
+        g.cols.map((col) =>
+          col.kind === 'grade' || col.kind === 'prom' ? Stats.describe(results.porAlumno.map((pa) => col.get(pa))) : null
+        )
+      );
+      statRows.forEach(([label, key]) => {
+        foot += '<tr><td class="sticky c0"></td><td class="sticky c1">' + label + '</td>';
+        groups.forEach((g, gi) =>
+          g.cols.forEach((col, k) => {
+            const d = descs[gi][k];
+            const text = d ? fmt(d[key], key === 'sd' ? 2 : undefined) : '';
+            foot += '<td' + (k === 0 ? ' class="sep-l"' : '') + '>' + text + '</td>';
+          })
+        );
+        foot += '</tr>';
+      });
+    }
+
+    table.innerHTML = '<thead>' + h1 + h2 + '</thead><tbody>' + body + '</tbody>' + (foot ? '<tfoot>' + foot + '</tfoot>' : '');
+    setHeaderOffset(table);
+  }
+
+  function bindOverview() {
+    ['#ov-evals', '#ov-prom', '#ov-t', '#ov-rank', '#ov-top', '#ov-foot', '#ov-order'].forEach((sel) =>
+      $(sel).addEventListener('change', renderOverview)
+    );
+    $('#ov-search').addEventListener('input', renderOverview);
+  }
+
+  // ---------------- Configuración ----------------
 
   function renderConfig() {
     document.querySelectorAll('[data-cfg]').forEach((inp) => {
@@ -318,7 +464,7 @@
     });
   }
 
-  // ---------------- 2. Captura de calificaciones (tabla de dos niveles) ----------------
+  // ---------------- Captura de calificaciones (tabla de dos niveles) ----------------
 
   function evalList() {
     const list = [];
@@ -500,7 +646,7 @@
     window.addEventListener('resize', () => setHeaderOffset(table));
   }
 
-  // ---------------- 3. Resultados ----------------
+  // ---------------- Resultados ----------------
 
   function renderResults() {
     const scopeSel = $('#results-scope');
@@ -684,7 +830,7 @@
     });
   }
 
-  // ---------------- 4. Reportes ----------------
+  // ---------------- Reportes ----------------
 
   function renderReport() {
     const sel = $('#report-mode');
@@ -810,9 +956,10 @@
   // ---------------- Inicio ----------------
 
   bindToolbar();
+  bindOverview();
   bindConfig();
   bindGrades();
   bindResults();
   bindReport();
-  showTab(state.alumnos.length && state.materias.length ? 'grades' : 'config');
+  showTab(state.alumnos.length && state.materias.length ? 'overview' : 'config');
 })();

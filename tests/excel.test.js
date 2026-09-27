@@ -58,7 +58,10 @@ test('exportar y volver a importar conserva los datos (ida y vuelta)', () => {
   };
   const res = Stats.computeResults(state);
   const sheets = Excel.buildSheets(state, res);
-  assert.deepEqual(sheets.map((s) => s.name), ['Calificaciones', 'Resultados', 'Estadísticas']);
+  assert.deepEqual(sheets.map((s) => s.name), ['Calificaciones', 'Tabla completa', 'Resultados', 'Estadísticas']);
+  const full = sheets[1].aoa;
+  assert.deepEqual(full[1].slice(2, 8), ['P1 (25%)', 'Examen (75%)', 'Promedio', 'Puntaje T', 'Posición', 'Top %']);
+  assert.equal(full.length, 2 + state.alumnos.length);
   const back = Excel.parseGrid(sheets[0].aoa);
   assert.deepEqual(back.materias.map((m) => m.nombre), ['Matemáticas', 'Historia']);
   assert.deepEqual(back.materias[0].evaluaciones.map((e) => [e.nombre, e.peso]), [['P1', 25], ['Examen', 75]]);

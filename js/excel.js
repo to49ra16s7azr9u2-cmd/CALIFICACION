@@ -258,7 +258,46 @@
 
     if (!o.withResults || !results) return sheets;
 
-    // --- Hoja 2: Resultados (ranking) ---
+    // --- Hoja 2: Tabla completa (toda la información en una hoja) ---
+    {
+      const fTop = ['No.', 'Nombre'];
+      const fSub = ['', ''];
+      const fMerges = [
+        { s: { r: 0, c: 0 }, e: { r: 1, c: 0 } },
+        { s: { r: 0, c: 1 }, e: { r: 1, c: 1 } },
+      ];
+      const addGroup = (name, labels) => {
+        const start = fTop.length;
+        labels.forEach((l, i) => {
+          fTop.push(i === 0 ? name : '');
+          fSub.push(l);
+        });
+        if (labels.length > 1) fMerges.push({ s: { r: 0, c: start }, e: { r: 0, c: start + labels.length - 1 } });
+      };
+      state.materias.forEach((m) =>
+        addGroup(m.nombre, m.evaluaciones.map((e) => evalLabel(m, e)).concat(['Promedio', 'Puntaje T', 'Posición', 'Top %']))
+      );
+      addGroup('General', ['Promedio', 'Puntaje T', 'Posición', 'Top %', 'Materias reprobadas']);
+      const fRows = results.porAlumno.map((pa) => {
+        const cal = state.calificaciones[pa.alumno.id] || {};
+        const row = [pa.alumno.numero, pa.alumno.nombre];
+        state.materias.forEach((m, mi) => {
+          m.evaluaciones.forEach((e) => row.push(Stats.isNum(cal[e.id]) ? cal[e.id] : ''));
+          const pm = pa.materias[mi];
+          row.push(round(pm.promedio, d), round(pm.tscore, 1), pm.rank == null ? '' : pm.rank, pm.top == null ? '' : round(pm.top, 1));
+        });
+        row.push(round(pa.general, d), round(pa.tscore, 1), pa.rank == null ? '' : pa.rank, pa.top == null ? '' : round(pa.top, 1), pa.reprobadas);
+        return row;
+      });
+      sheets.push({
+        name: 'Tabla completa',
+        aoa: [fTop, fSub].concat(fRows),
+        merges: fMerges,
+        cols: fTop.map((_, c) => ({ wch: c === 1 ? 32 : c === 0 ? 5 : 10 })),
+      });
+    }
+
+    // --- Hoja 3: Resultados (ranking) ---
     const rHead = ['Posición', 'No.', 'Nombre', 'Promedio general', 'Puntaje T', 'Top %', 'Materias reprobadas'];
     state.materias.forEach((m) => {
       rHead.push(m.nombre + ' – Prom.', m.nombre + ' – T', m.nombre + ' – Posición');
@@ -291,7 +330,7 @@
       cols: rHead.map((_, c) => ({ wch: c === 2 ? 32 : 12 })),
     });
 
-    // --- Hoja 3: Estadísticas por materia ---
+    // --- Hoja 4: Estadísticas por materia ---
     const sHead = ['Materia', 'Alumnos evaluados', 'Media', 'Desv. estándar', 'Mínimo', 'Máximo', 'Mediana', 'Reprobados'];
     const sRows = results.perMateria.map((pm) => [
       pm.materia.nombre,

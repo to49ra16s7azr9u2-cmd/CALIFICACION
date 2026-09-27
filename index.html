@@ -13,10 +13,11 @@
       <span id="hdr-sub" class="muted"></span>
     </div>
     <nav class="tabs" role="tablist">
-      <button class="tab active" data-tab="config" role="tab">1. Configuración</button>
-      <button class="tab" data-tab="grades" role="tab">2. Calificaciones</button>
-      <button class="tab" data-tab="results" role="tab">3. Resultados</button>
-      <button class="tab" data-tab="report" role="tab">4. Reportes y boletas</button>
+      <button class="tab active" data-tab="overview" role="tab">1. Vista general</button>
+      <button class="tab" data-tab="config" role="tab">2. Configuración</button>
+      <button class="tab" data-tab="grades" role="tab">3. Calificaciones</button>
+      <button class="tab" data-tab="results" role="tab">4. Resultados</button>
+      <button class="tab" data-tab="report" role="tab">5. Reportes y boletas</button>
     </nav>
   </header>
 
@@ -39,8 +40,46 @@
   </div>
 
   <main>
-    <!-- 1. Configuración -->
-    <section id="tab-config" class="panel active">
+    <!-- 1. Vista general: toda la información en una sola tabla -->
+    <section id="tab-overview" class="panel active">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2>Tabla completa del grupo</h2>
+            <div id="ov-meta" class="muted small"></div>
+          </div>
+          <div class="row ov-controls">
+            <input type="text" id="ov-search" placeholder="Buscar alumno…" aria-label="Buscar alumno">
+            <label class="small">Ordenar:
+              <select id="ov-order">
+                <option value="lista">No. de lista</option>
+                <option value="rank">Posición general</option>
+                <option value="nombre">Nombre</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div class="row ov-toggles small">
+          <span class="muted">Mostrar por materia:</span>
+          <label><input type="checkbox" id="ov-evals" checked> Evaluaciones</label>
+          <label><input type="checkbox" id="ov-prom" checked> Promedio</label>
+          <label><input type="checkbox" id="ov-t" checked> Puntaje T</label>
+          <label><input type="checkbox" id="ov-rank" checked> Posición</label>
+          <label><input type="checkbox" id="ov-top" checked> Top %</label>
+          <label><input type="checkbox" id="ov-foot" checked> Estadísticas del grupo</label>
+        </div>
+        <div class="grade-wrap">
+          <table class="grades overview" id="ov-table"></table>
+        </div>
+        <p class="muted small">
+          Todo en una sola tabla: calificaciones de cada evaluación, promedio, puntaje T, posición y porcentaje superior por materia y en general.
+          Para modificar calificaciones use «Calificaciones». Rojo = reprobatoria.
+        </p>
+      </div>
+    </section>
+
+    <!-- 2. Configuración -->
+    <section id="tab-config" class="panel">
       <div class="grid-2">
         <div class="card">
           <h2>Datos del grupo</h2>
@@ -86,7 +125,7 @@
       </div>
     </section>
 
-    <!-- 2. Calificaciones -->
+    <!-- 3. Calificaciones -->
     <section id="tab-grades" class="panel">
       <div class="card">
         <div class="card-head">
@@ -103,7 +142,7 @@
       </div>
     </section>
 
-    <!-- 3. Resultados -->
+    <!-- 4. Resultados -->
     <section id="tab-results" class="panel">
       <div class="kpis" id="kpis"></div>
       <div class="card">
@@ -127,7 +166,7 @@
       </div>
     </section>
 
-    <!-- 4. Reportes -->
+    <!-- 5. Reportes -->
     <section id="tab-report" class="panel">
       <div class="card">
         <div class="card-head">
