@@ -1,0 +1,11 @@
+{
+  "name": "calificacion",
+  "version": "1.0.0",
+  "description": "Sistema de calificaciones para docentes: tabla de dos niveles, puntaje T, posiciones, top % y boletas automáticas. Importa y exporta Excel.",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "start": "npx --yes http-server -c-1 -p 8080 ."
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="es-MX">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Calificaciones del Grupo</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <h1>Calificaciones</h1>
+      <span id="hdr-sub" class="muted"></span>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="config" role="tab">1. Configuración</button>
+      <button class="tab" data-tab="grades" role="tab">2. Calificaciones</button>
+      <button class="tab" data-tab="results" role="tab">3. Resultados</button>
+      <button class="tab" data-tab="report" role="tab">4. Reportes y boletas</button>
+    </nav>
+  </header>
+
+  <div class="toolbar">
+    <label class="btn">
+      📥 Importar Excel / CSV
+      <input type="file" id="file-import" accept=".xlsx,.xls,.xlsm,.ods,.csv" hidden>
+    </label>
+    <button class="btn" id="btn-export-xlsx">📤 Exportar Excel</button>
+    <button class="btn" id="btn-export-csv">📤 Exportar CSV</button>
+    <button class="btn" id="btn-template">📄 Descargar plantilla</button>
+    <span class="sep"></span>
+    <button class="btn ghost" id="btn-backup">💾 Respaldo (JSON)</button>
+    <label class="btn ghost">
+      ♻️ Restaurar respaldo
+      <input type="file" id="file-backup" accept=".json" hidden>
+    </label>
+    <button class="btn ghost" id="btn-sample">🧪 Datos de ejemplo</button>
+    <button class="btn ghost danger" id="btn-reset">🗑️ Borrar todo</button>
+  </div>
+
+  <main>
+    <!-- 1. Configuración -->
+    <section id="tab-config" class="panel active">
+      <div class="grid-2">
+        <div class="card">
+          <h2>Datos del grupo</h2>
+          <div class="form">
+            <label>Escuela <input data-cfg="escuela" type="text" placeholder="Escuela Secundaria Técnica No. 1"></label>
+            <label>Grupo <input data-cfg="grupo" type="text" placeholder="2° A"></label>
+            <label>Ciclo escolar <input data-cfg="ciclo" type="text" placeholder="2026-2027"></label>
+            <label>Docente <input data-cfg="maestro" type="text" placeholder="Nombre del docente"></label>
+            <label>Calificación máxima <input data-cfg="escalaMax" type="number" min="1" step="any"></label>
+            <label>Mínima aprobatoria <input data-cfg="aprobatoria" type="number" min="0" step="any"></label>
+            <label>Decimales a mostrar <input data-cfg="decimales" type="number" min="0" max="3" step="1"></label>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Alumnos <span id="alumnos-count" class="pill"></span></h2>
+          <p class="muted small">Pegue una lista de nombres (uno por renglón) para agregarlos de una vez.</p>
+          <textarea id="bulk-alumnos" rows="4" placeholder="García López Ana&#10;Hernández Pérez Luis&#10;..."></textarea>
+          <div class="row">
+            <button class="btn" id="btn-add-alumnos">➕ Agregar alumnos</button>
+            <button class="btn ghost" id="btn-sort-alumnos">🔤 Ordenar alfabéticamente</button>
+          </div>
+          <div class="list-wrap">
+            <table class="simple" id="alumnos-table">
+              <thead><tr><th style="width:70px">No.</th><th>Nombre</th><th style="width:40px"></th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Materias y evaluaciones</h2>
+        <p class="muted small">
+          Cada materia forma el primer nivel del encabezado y sus evaluaciones (parciales, trimestres, exámenes, tareas…) el segundo nivel.
+          El <b>peso</b> es relativo: por ejemplo 30 / 30 / 40, o 1 / 1 / 2. Las evaluaciones vacías no se cuentan en el promedio.
+        </p>
+        <div id="materias-editor"></div>
+        <div class="row">
+          <input type="text" id="new-materia" placeholder="Nombre de la materia (p. ej., Matemáticas)">
+          <input type="text" id="new-evals" value="Trimestre 1, Trimestre 2, Trimestre 3" title="Evaluaciones separadas por comas">
+          <button class="btn" id="btn-add-materia">➕ Agregar materia</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. Calificaciones -->
+    <section id="tab-grades" class="panel">
+      <div class="card">
+        <div class="card-head">
+          <h2>Captura de calificaciones</h2>
+          <div class="legend">
+            <span><i class="sw bad"></i> Reprobatoria</span>
+            <span><i class="sw err"></i> Fuera de rango</span>
+            <span class="muted small">Enter = bajar · Puede pegar un bloque copiado de Excel</span>
+          </div>
+        </div>
+        <div class="grade-wrap">
+          <table class="grades" id="grades-table"></table>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. Resultados -->
+    <section id="tab-results" class="panel">
+      <div class="kpis" id="kpis"></div>
+      <div class="card">
+        <div class="card-head">
+          <h2>Posiciones, puntaje T y porcentaje superior</h2>
+          <label class="small">Ver por:
+            <select id="results-scope"></select>
+          </label>
+        </div>
+        <div class="grade-wrap">
+          <table class="results" id="results-table"></table>
+        </div>
+        <p class="muted small">
+          <b>Puntaje T</b> = 50 + 10 × (calificación − media) ÷ desviación estándar del grupo (equivale al «偏差値» japonés).
+          <b>Top %</b> = posición ÷ alumnos × 100. Los empates comparten posición. Haga clic en un encabezado para ordenar.
+        </p>
+      </div>
+      <div class="card">
+        <h2>Estadísticas por materia</h2>
+        <div class="grade-wrap"><table class="results" id="stats-table"></table></div>
+      </div>
+    </section>
+
+    <!-- 4. Reportes -->
+    <section id="tab-report" class="panel">
+      <div class="card">
+        <div class="card-head">
+          <h2>Páginas generadas automáticamente</h2>
+          <div class="row">
+            <select id="report-mode"></select>
+            <button class="btn" id="btn-print">🖨️ Imprimir / PDF</button>
+            <button class="btn" id="btn-download-html">⬇️ Descargar página HTML</button>
+          </div>
+        </div>
+        <iframe id="report-frame" title="Vista previa del reporte"></iframe>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <script src="vendor/xlsx.full.min.js"></script>
+  <script src="js/stats.js"></script>
+  <script src="js/excel.js"></script>
+  <script src="js/report.js"></script>
+  <script src="js/sample.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
